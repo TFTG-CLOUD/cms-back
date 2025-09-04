@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Processing Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .progress-container {
+            margin-top: 20px;
+            display: none;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            height: 100%;
+            background-color: #007bff;
+            transition: width 0.3s ease;
+        }
+        .progress-text {
+            text-align: center;
+            margin-top: 10px;
+            font-weight: bold;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .log-entry {
+            margin-bottom: 5px;
+            padding: 2px 0;
+        }
+        .log-entry.success {
+            color: #28a745;
+        }
+        .log-entry.error {
+            color: #dc3545;
+        }
+        .log-entry.info {
+            color: #007bff;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            background: #e7f3ff;
+            border-radius: 4px;
+            display: none;
+        }
+        .config-section {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .audio-visualizer {
+            margin-top: 20px;
+            text-align: center;
+        }
+        .audio-player {
+            width: 100%;
+            margin-top: 10px;
+        }
+        .metadata {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 10px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .chunked-upload {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Audio Processing System Demo</h1>
+        
+        <div class="config-section">
+            <h3>Server Configuration</h3>
+            <div class="form-group">
+                <label for="serverUrl">Server URL:</label>
+                <input type="text" id="serverUrl" value="http://localhost:3000" placeholder="http://localhost:3000">
+            </div>
+            <div class="form-group">
+                <label for="apiKey">API Key:</label>
+                <input type="text" id="apiKey" placeholder="Your API Key">
+            </div>
+            <div class="form-group">
+                <label for="apiSecret">API Secret:</label>
+                <input type="password" id="apiSecret" placeholder="Your API Secret">
+            </div>
+        </div>
+
+        <div class="chunked-upload">
+            <h3>Large File Support</h3>
+            <p>This demo supports chunked uploads for files larger than 500MB. Files are automatically split into chunks and reassembled on the server.</p>
+            <div class="form-group">
+                <label for="chunkSize">Chunk Size (MB):</label>
+                <input type="number" id="chunkSize" value="5" min="1" max="50">
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="fileSelect">Select Audio File:</label>
+            <input type="file" id="fileSelect" accept="audio/*">
+        </div>
+
+        <div class="form-group">
+            <label for="processingType">Processing Type:</label>
+            <select id="processingType">
+                <option value="audio-convert">Audio Conversion</option>
+                <option value="audio-normalize">Audio Normalization</option>
+                <option value="audio-trim">Audio Trimming</option>
+                <option value="audio-extract">Extract Audio from Video</option>
+            </select>
+        </div>
+
+        <div id="audioOptions" class="form-group">
+            <label for="audioFormat">Output Format:</label>
+            <select id="audioFormat">
+                <option value="mp3">MP3</option>
+                <option value="aac">AAC</option>
+                <option value="ogg">OGG</option>
+                <option value="wav">WAV</option>
+                <option value="flac">FLAC</option>
+            </select>
+        </div>
+
+        <div id="qualityOptions" class="form-group">
+            <label for="quality">Quality:</label>
+            <select id="quality">
+                <option value="low">Low (64kbps)</option>
+                <option value="medium" selected>Medium (128kbps)</option>
+                <option value="high">High (192kbps)</option>
+                <option value="very-high">Very High (320kbps)</option>
+            </select>
+        </div>
+
+        <div id="trimOptions" class="form-group" style="display: none;">
+            <label for="startTime">Start Time (seconds):</label>
+            <input type="number" id="startTime" value="0" min="0" step="0.1">
+            <label for="duration" style="margin-top: 10px;">Duration (seconds):</label>
+            <input type="number" id="duration" value="10" min="0.1" step="0.1">
+        </div>
+
+        <div class="form-group">
+            <label for="sampleRate">Sample Rate (Hz):</label>
+            <select id="sampleRate">
+                <option value="44100">44.1 kHz</option>
+                <option value="48000">48 kHz</option>
+                <option value="32000">32 kHz</option>
+                <option value="22050">22.05 kHz</option>
+                <option value="16000">16 kHz</option>
+            </select>
+        </div>
+
+        <div class="form-group">
+            <label for="channels">Channels:</label>
+            <select id="channels">
+                <option value="2">Stereo</option>
+                <option value="1">Mono</option>
+            </select>
+        </div>
+
+        <button id="uploadBtn" onclick="uploadAndProcess()">Upload & Process</button>
+        <button id="analyzeBtn" onclick="analyzeAudio()">Analyze Audio</button>
+        <button id="connectBtn" onclick="connectToServer()">Connect to Server</button>
+
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="progress-text" id="progressText">0%</div>
+        </div>
+
+        <div class="result" id="result"></div>
+
+        <div class="audio-visualizer" id="audioVisualizer" style="display: none;">
+            <h3>Audio Preview</h3>
+            <audio id="audioPlayer" class="audio-player" controls></audio>
+            <div id="audioMetadata" class="metadata"></div>
+        </div>
+
+        <div class="log" id="log"></div>
+    </div>
+
+    <script src="/client.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script>
+        let client = null;
+        let currentJobId = null;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const entry = document.createElement('div');
+            entry.className = `log-entry ${type}`;
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateProgress(progress, status) {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            const progressContainer = document.getElementById('progressContainer');
+            
+            progressContainer.style.display = 'block';
+            progressFill.style.width = `${progress}%`;
+            progressText.textContent = `${progress}% - ${status}`;
+            
+            log(`Progress: ${progress}% - ${status}`, 'info');
+        }
+
+        function connectToServer() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const apiKey = document.getElementById('apiKey').value;
+            const apiSecret = document.getElementById('apiSecret').value;
+
+            if (!serverUrl || !apiKey || !apiSecret) {
+                log('Please fill in server configuration', 'error');
+                return;
+            }
+
+            client = new MediaProcessingClient(serverUrl, apiKey, apiSecret);
+            
+            client.onProgress((data) => {
+                updateProgress(data.progress, data.status);
+                
+                if (data.status === 'completed') {
+                    showResult(data);
+                    if (data.result && data.result.format && ['mp3', 'aac', 'ogg', 'wav'].includes(data.result.format)) {
+                        showAudioPlayer(data.result.outputPath);
+                    }
+                } else if (data.status === 'failed') {
+                    log(`Processing failed: ${data.error?.message}`, 'error');
+                }
+            });
+
+            client.connect();
+            log('Connected to server', 'success');
+            document.getElementById('connectBtn').textContent = 'Connected';
+            document.getElementById('connectBtn').disabled = true;
+        }
+
+        function showResult(data) {
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = `
+                <h3>Processing Complete!</h3>
+                <p><strong>Job ID:</strong> ${data.jobId}</p>
+                <p><strong>Status:</strong> ${data.status}</p>
+                <p><strong>Progress:</strong> ${data.progress}%</p>
+                ${data.result ? `
+                    <p><strong>Output File:</strong> ${data.result.outputPath}</p>
+                    <p><strong>File Size:</strong> ${formatBytes(data.result.size)}</p>
+                    <p><strong>Format:</strong> ${data.result.format}</p>
+                    ${data.result.duration ? `<p><strong>Duration:</strong> ${formatDuration(data.result.duration)}</p>` : ''}
+                    ${data.result.bitrate ? `<p><strong>Bitrate:</strong> ${data.result.bitrate} kbps</p>` : ''}
+                    ${data.result.sampleRate ? `<p><strong>Sample Rate:</strong> ${data.result.sampleRate} Hz</p>` : ''}
+                    ${data.result.channels ? `<p><strong>Channels:</strong> ${data.result.channels}</p>` : ''}
+                ` : ''}
+            `;
+            log('Processing completed successfully!', 'success');
+        }
+
+        function showAudioPlayer(audioPath) {
+            const audioVisualizer = document.getElementById('audioVisualizer');
+            const audioPlayer = document.getElementById('audioPlayer');
+            
+            audioVisualizer.style.display = 'block';
+            audioPlayer.src = audioPath;
+            
+            log('Audio player ready', 'success');
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function formatDuration(seconds) {
+            const hours = Math.floor(seconds / 3600);
+            const minutes = Math.floor((seconds % 3600) / 60);
+            const remainingSeconds = Math.floor(seconds % 60);
+            
+            if (hours > 0) {
+                return `${hours}:${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`;
+            } else {
+                return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+            }
+        }
+
+        async function uploadAndProcess() {
+            if (!client) {
+                log('Please connect to server first', 'error');
+                return;
+            }
+
+            const fileSelect = document.getElementById('fileSelect');
+            const file = fileSelect.files[0];
+            
+            if (!file) {
+                log('Please select a file', 'error');
+                return;
+            }
+
+            const processingType = document.getElementById('processingType').value;
+            const audioFormat = document.getElementById('audioFormat').value;
+            const quality = document.getElementById('quality').value;
+            const sampleRate = document.getElementById('sampleRate').value;
+            const channels = document.getElementById('channels').value;
+            const startTime = document.getElementById('startTime').value;
+            const duration = document.getElementById('duration').value;
+
+            const parameters = {
+                format: audioFormat,
+                quality: quality,
+                sampleRate: parseInt(sampleRate),
+                channels: parseInt(channels)
+            };
+
+            if (processingType === 'audio-trim') {
+                parameters.startTime = parseFloat(startTime);
+                parameters.duration = parseFloat(duration);
+            }
+
+            try {
+                log(`Uploading file: ${file.name}`, 'info');
+                updateProgress(0, 'Uploading...');
+
+                const uploadResult = await client.uploadFile(file);
+                log(`File uploaded successfully: ${uploadResult.fileId}`, 'success');
+
+                updateProgress(0, 'Creating processing job...');
+                const job = await client.createProcessingJob(uploadResult.fileId, processingType, parameters);
+                
+                currentJobId = job.id;
+                log(`Processing job created: ${job.id}`, 'success');
+                updateProgress(0, 'Processing started...');
+
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+                updateProgress(0, 'Error occurred');
+            }
+        }
+
+        async function analyzeAudio() {
+            if (!client) {
+                log('Please connect to server first', 'error');
+                return;
+            }
+
+            const fileSelect = document.getElementById('fileSelect');
+            const file = fileSelect.files[0];
+            
+            if (!file) {
+                log('Please select a file', 'error');
+                return;
+            }
+
+            try {
+                log(`Analyzing audio file: ${file.name}`, 'info');
+                
+                // For demo purposes, we'll simulate audio analysis
+                // In a real implementation, you would have an analysis endpoint
+                const metadataDiv = document.getElementById('audioMetadata');
+                metadataDiv.innerHTML = `
+                    <h4>Audio Analysis</h4>
+                    <p><strong>File:</strong> ${file.name}</p>
+                    <p><strong>Size:</strong> ${formatBytes(file.size)}</p>
+                    <p><strong>Type:</strong> ${file.type}</p>
+                    <p><strong>Last Modified:</strong> ${new Date(file.lastModified).toLocaleString()}</p>
+                `;
+                
+                log('Audio analysis completed', 'success');
+                
+            } catch (error) {
+                log(`Analysis error: ${error.message}`, 'error');
+            }
+        }
+
+        // Update form based on processing type
+        document.getElementById('processingType').addEventListener('change', function() {
+            const type = this.value;
+            const audioOptions = document.getElementById('audioOptions');
+            const qualityOptions = document.getElementById('qualityOptions');
+            const trimOptions = document.getElementById('trimOptions');
+            
+            if (type === 'audio-trim') {
+                trimOptions.style.display = 'block';
+            } else {
+                trimOptions.style.display = 'none';
+            }
+            
+            if (['audio-convert', 'audio-normalize'].includes(type)) {
+                audioOptions.style.display = 'block';
+                qualityOptions.style.display = 'block';
+            } else {
+                audioOptions.style.display = 'block';
+                qualityOptions.style.display = 'none';
+            }
+        });
+
+        // Initialize
+        log('Audio Processing Demo loaded', 'info');
+    </script>
+</body>
+</html>
