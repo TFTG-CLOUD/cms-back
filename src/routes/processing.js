@@ -30,7 +30,7 @@ router.post('/job', authenticateApiKey, validatePermission('process'), async (re
       webhookUrl,
       webhookSecret,
       cmsId,
-      status: 'queued' // Updated status to reflect queuing
+      status: 'pending' // Updated status to reflect queuing
     });
 
     await job.save();

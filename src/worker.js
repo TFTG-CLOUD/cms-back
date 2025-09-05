@@ -1,16 +1,18 @@
 const throng = require('throng');
 const Queue = require('bull');
 const path = require('path');
+const mongoose = require('mongoose');
 require('dotenv').config();
 
 // Import processing services
 const MediaProcessor = require('./services/MediaProcessor');
 const BatchProcessor = require('./services/BatchProcessor');
 const { queues, redisConnection } = require('./services/QueueManager');
+const ProcessingJob = require('./models/ProcessingJob');
 
 // Worker configuration
-const WORKERS = process.env.WORKER_COUNT || 2;
-const CONCURRENCY = process.env.QUEUE_CONCURRENCY || 3;
+const WORKERS = parseInt(process.env.WORKER_COUNT) || 2;
+const CONCURRENCY = parseInt(process.env.QUEUE_CONCURRENCY) || 3;
 
 // Start workers
 throng({
@@ -19,8 +21,17 @@ throng({
   start: startWorker
 });
 
-function startWorker(id) {
+async function startWorker(id) {
   console.log(`Worker ${id} started with concurrency ${CONCURRENCY}`);
+  
+  // Connect to MongoDB
+  try {
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/media_processing');
+    console.log(`Worker ${id} connected to MongoDB`);
+  } catch (error) {
+    console.error(`Worker ${id} failed to connect to MongoDB:`, error);
+    process.exit(1);
+  }
   
   // Create Socket.IO instance for progress updates
   const io = require('socket.io-client')(process.env.SERVER_URL || 'http://localhost:3000');
@@ -39,13 +50,26 @@ function startWorker(id) {
   });
 
   // Process video transcoding jobs
-  queues.videoTranscoding.process(CONCURRENCY, async (job) => {
-    console.log(`Worker ${id} processing video transcoding job ${job.id}`);
+  queues.videoTranscoding.process('video-transcode', CONCURRENCY, async (job) => {
+    console.log(`Worker ${id} processing video transcoding job ${job.id} (${job.name})`);
     
     try {
+      // Update job status to processing
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'processing',
+        startedAt: new Date(),
+        progress: 0
+      });
+      
       // Set up progress monitoring for this job
-      const progressCallback = (progress, status) => {
+      const progressCallback = async (progress, status) => {
         job.progress(progress);
+        
+        // Update database job progress
+        await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+          progress: progress,
+          status: status === 'completed' ? 'completed' : 'processing'
+        });
         
         // Send progress update via Socket.IO
         io.emit('job-progress', {
@@ -58,11 +82,29 @@ function startWorker(id) {
       // Process the video
       const result = await processVideoWithProgress(job.data, progressCallback);
       
+      // Update job status to completed
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'completed',
+        progress: 100,
+        result: result,
+        completedAt: new Date()
+      });
+      
       console.log(`Worker ${id} completed video transcoding job ${job.id}`);
       return result;
       
     } catch (error) {
       console.error(`Worker ${id} failed video transcoding job ${job.id}:`, error);
+      
+      // Update job status to failed
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'failed',
+        error: {
+          message: error.message,
+          stack: error.stack
+        },
+        completedAt: new Date()
+      });
       
       // Send error update via Socket.IO
       io.emit('job-progress', {
@@ -77,12 +119,26 @@ function startWorker(id) {
   });
 
   // Process audio conversion jobs
-  queues.audioProcessing.process(CONCURRENCY, async (job) => {
+  queues.audioProcessing.process('audio-convert', CONCURRENCY, async (job) => {
     console.log(`Worker ${id} processing audio job ${job.id}`);
     
     try {
-      const progressCallback = (progress, status) => {
+      // Update job status to processing
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'processing',
+        startedAt: new Date(),
+        progress: 0
+      });
+      
+      const progressCallback = async (progress, status) => {
         job.progress(progress);
+        
+        // Update database job progress
+        await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+          progress: progress,
+          status: status === 'completed' ? 'completed' : 'processing'
+        });
+        
         io.emit('job-progress', {
           jobId: job.data.jobId,
           progress,
@@ -92,11 +148,29 @@ function startWorker(id) {
 
       const result = await processAudioWithProgress(job.data, progressCallback);
       
+      // Update job status to completed
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'completed',
+        progress: 100,
+        result: result,
+        completedAt: new Date()
+      });
+      
       console.log(`Worker ${id} completed audio job ${job.id}`);
       return result;
       
     } catch (error) {
       console.error(`Worker ${id} failed audio job ${job.id}:`, error);
+      
+      // Update job status to failed
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'failed',
+        error: {
+          message: error.message,
+          stack: error.stack
+        },
+        completedAt: new Date()
+      });
       
       io.emit('job-progress', {
         jobId: job.data.jobId,
@@ -110,12 +184,26 @@ function startWorker(id) {
   });
 
   // Process image jobs
-  queues.imageProcessing.process(CONCURRENCY, async (job) => {
+  queues.imageProcessing.process('image-resize', CONCURRENCY, async (job) => {
     console.log(`Worker ${id} processing image job ${job.id}`);
     
     try {
-      const progressCallback = (progress, status) => {
+      // Update job status to processing
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'processing',
+        startedAt: new Date(),
+        progress: 0
+      });
+      
+      const progressCallback = async (progress, status) => {
         job.progress(progress);
+        
+        // Update database job progress
+        await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+          progress: progress,
+          status: status === 'completed' ? 'completed' : 'processing'
+        });
+        
         io.emit('job-progress', {
           jobId: job.data.jobId,
           progress,
@@ -125,11 +213,29 @@ function startWorker(id) {
 
       const result = await processImageWithProgress(job.data, progressCallback);
       
+      // Update job status to completed
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'completed',
+        progress: 100,
+        result: result,
+        completedAt: new Date()
+      });
+      
       console.log(`Worker ${id} completed image job ${job.id}`);
       return result;
       
     } catch (error) {
       console.error(`Worker ${id} failed image job ${job.id}:`, error);
+      
+      // Update job status to failed
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'failed',
+        error: {
+          message: error.message,
+          stack: error.stack
+        },
+        completedAt: new Date()
+      });
       
       io.emit('job-progress', {
         jobId: job.data.jobId,
@@ -143,12 +249,26 @@ function startWorker(id) {
   });
 
   // Process thumbnail jobs
-  queues.thumbnailGeneration.process(CONCURRENCY, async (job) => {
+  queues.thumbnailGeneration.process('video-thumbnail', CONCURRENCY, async (job) => {
     console.log(`Worker ${id} processing thumbnail job ${job.id}`);
     
     try {
-      const progressCallback = (progress, status) => {
+      // Update job status to processing
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'processing',
+        startedAt: new Date(),
+        progress: 0
+      });
+      
+      const progressCallback = async (progress, status) => {
         job.progress(progress);
+        
+        // Update database job progress
+        await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+          progress: progress,
+          status: status === 'completed' ? 'completed' : 'processing'
+        });
+        
         io.emit('job-progress', {
           jobId: job.data.jobId,
           progress,
@@ -158,11 +278,29 @@ function startWorker(id) {
 
       const result = await processThumbnailWithProgress(job.data, progressCallback);
       
+      // Update job status to completed
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'completed',
+        progress: 100,
+        result: result,
+        completedAt: new Date()
+      });
+      
       console.log(`Worker ${id} completed thumbnail job ${job.id}`);
       return result;
       
     } catch (error) {
       console.error(`Worker ${id} failed thumbnail job ${job.id}:`, error);
+      
+      // Update job status to failed
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'failed',
+        error: {
+          message: error.message,
+          stack: error.stack
+        },
+        completedAt: new Date()
+      });
       
       io.emit('job-progress', {
         jobId: job.data.jobId,
@@ -207,98 +345,177 @@ function startWorker(id) {
 async function processVideoWithProgress(data, progressCallback) {
   const { jobId, inputPath, outputPath, parameters } = data;
   
-  progressCallback(0, 'processing');
-  
-  // Simulate video processing with progress updates
-  const totalSteps = 10;
-  for (let i = 1; i <= totalSteps; i++) {
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate work
-    const progress = (i / totalSteps) * 100;
-    progressCallback(progress, 'processing');
+  try {
+    progressCallback(0, 'processing');
+    
+    // Create MediaProcessor instance
+    const MediaProcessor = require('./services/MediaProcessor');
+    const mediaProcessor = new MediaProcessor();
+    
+    // Create job object for MediaProcessor
+    const job = {
+      _id: jobId,
+      inputPath,
+      outputPath,
+      parameters
+    };
+    
+    // Process video using MediaProcessor
+    const result = await new Promise((resolve, reject) => {
+      // Override the updateJobStatus method to use our progressCallback
+      mediaProcessor.updateJobStatus = async (jobId, status, progress, result = null, error = null) => {
+        progressCallback(progress, status);
+        
+        if (status === 'completed') {
+          resolve(result);
+        } else if (status === 'failed') {
+          reject(new Error(error));
+        }
+      };
+      
+      // Process the video
+      mediaProcessor.processVideo(job).catch(reject);
+    });
+    
+    progressCallback(100, 'completed');
+    return result;
+    
+  } catch (error) {
+    progressCallback(0, 'failed');
+    throw error;
   }
-  
-  progressCallback(100, 'completed');
-  
-  return {
-    outputPath,
-    size: Math.floor(Math.random() * 100000000) + 1000000,
-    format: parameters.format || 'mp4',
-    duration: Math.floor(Math.random() * 3600) + 60
-  };
 }
 
 async function processAudioWithProgress(data, progressCallback) {
   const { jobId, inputPath, outputPath, parameters } = data;
   
-  progressCallback(0, 'processing');
-  
-  // Simulate audio processing with progress updates
-  const totalSteps = 8;
-  for (let i = 1; i <= totalSteps; i++) {
-    await new Promise(resolve => setTimeout(resolve, 800)); // Simulate work
-    const progress = (i / totalSteps) * 100;
-    progressCallback(progress, 'processing');
+  try {
+    progressCallback(0, 'processing');
+    
+    // Create MediaProcessor instance
+    const MediaProcessor = require('./services/MediaProcessor');
+    const mediaProcessor = new MediaProcessor();
+    
+    // Create job object for MediaProcessor
+    const job = {
+      _id: jobId,
+      inputPath,
+      outputPath,
+      parameters
+    };
+    
+    // Process audio using MediaProcessor
+    const result = await new Promise((resolve, reject) => {
+      // Override the updateJobStatus method to use our progressCallback
+      mediaProcessor.updateJobStatus = async (jobId, status, progress, result = null, error = null) => {
+        progressCallback(progress, status);
+        
+        if (status === 'completed') {
+          resolve(result);
+        } else if (status === 'failed') {
+          reject(new Error(error));
+        }
+      };
+      
+      // Process the audio
+      mediaProcessor.processAudio(job).catch(reject);
+    });
+    
+    progressCallback(100, 'completed');
+    return result;
+    
+  } catch (error) {
+    progressCallback(0, 'failed');
+    throw error;
   }
-  
-  progressCallback(100, 'completed');
-  
-  return {
-    outputPath,
-    size: Math.floor(Math.random() * 50000000) + 1000000,
-    format: parameters.format || 'mp3',
-    duration: Math.floor(Math.random() * 1800) + 30,
-    bitrate: parameters.bitrate || '128k',
-    sampleRate: parameters.sampleRate || 44100,
-    channels: parameters.channels || 2
-  };
 }
 
 async function processImageWithProgress(data, progressCallback) {
   const { jobId, inputPath, outputPath, parameters } = data;
   
-  progressCallback(0, 'processing');
-  
-  // Simulate image processing with progress updates
-  const totalSteps = 5;
-  for (let i = 1; i <= totalSteps; i++) {
-    await new Promise(resolve => setTimeout(resolve, 500)); // Simulate work
-    const progress = (i / totalSteps) * 100;
-    progressCallback(progress, 'processing');
+  try {
+    progressCallback(0, 'processing');
+    
+    // Create MediaProcessor instance
+    const MediaProcessor = require('./services/MediaProcessor');
+    const mediaProcessor = new MediaProcessor();
+    
+    // Create job object for MediaProcessor
+    const job = {
+      _id: jobId,
+      inputPath,
+      outputPath,
+      parameters
+    };
+    
+    // Process image using MediaProcessor
+    const result = await new Promise((resolve, reject) => {
+      // Override the updateJobStatus method to use our progressCallback
+      mediaProcessor.updateJobStatus = async (jobId, status, progress, result = null, error = null) => {
+        progressCallback(progress, status);
+        
+        if (status === 'completed') {
+          resolve(result);
+        } else if (status === 'failed') {
+          reject(new Error(error));
+        }
+      };
+      
+      // Process the image
+      mediaProcessor.processImage(job).catch(reject);
+    });
+    
+    progressCallback(100, 'completed');
+    return result;
+    
+  } catch (error) {
+    progressCallback(0, 'failed');
+    throw error;
   }
-  
-  progressCallback(100, 'completed');
-  
-  return {
-    outputPath,
-    size: Math.floor(Math.random() * 10000000) + 100000,
-    format: parameters.format || 'jpg',
-    width: parameters.width || 1920,
-    height: parameters.height || 1080
-  };
 }
 
 async function processThumbnailWithProgress(data, progressCallback) {
   const { jobId, inputPath, outputPath, parameters } = data;
   
-  progressCallback(0, 'processing');
-  
-  // Simulate thumbnail generation with progress updates
-  const totalSteps = 3;
-  for (let i = 1; i <= totalSteps; i++) {
-    await new Promise(resolve => setTimeout(resolve, 300)); // Simulate work
-    const progress = (i / totalSteps) * 100;
-    progressCallback(progress, 'processing');
+  try {
+    progressCallback(0, 'processing');
+    
+    // Create MediaProcessor instance
+    const MediaProcessor = require('./services/MediaProcessor');
+    const mediaProcessor = new MediaProcessor();
+    
+    // Create job object for MediaProcessor
+    const job = {
+      _id: jobId,
+      inputPath,
+      outputPath,
+      parameters
+    };
+    
+    // Process thumbnail using MediaProcessor
+    const result = await new Promise((resolve, reject) => {
+      // Override the updateJobStatus method to use our progressCallback
+      mediaProcessor.updateJobStatus = async (jobId, status, progress, result = null, error = null) => {
+        progressCallback(progress, status);
+        
+        if (status === 'completed') {
+          resolve(result);
+        } else if (status === 'failed') {
+          reject(new Error(error));
+        }
+      };
+      
+      // Process the thumbnail
+      mediaProcessor.generateThumbnail(job).catch(reject);
+    });
+    
+    progressCallback(100, 'completed');
+    return result;
+    
+  } catch (error) {
+    progressCallback(0, 'failed');
+    throw error;
   }
-  
-  progressCallback(100, 'completed');
-  
-  return {
-    outputPath,
-    size: Math.floor(Math.random() * 1000000) + 50000,
-    format: 'jpg',
-    width: parameters.width || 320,
-    height: parameters.height || 240
-  };
 }
 
 async function processBatchJob(data, io) {
