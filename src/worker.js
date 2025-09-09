@@ -329,6 +329,71 @@ async function startWorker(id) {
     }
   });
 
+  // Process archive jobs
+  queues.archiveProcessing.process('archive-process', CONCURRENCY, async (job) => {
+    console.log(`Worker ${id} processing archive job ${job.id}`);
+    
+    try {
+      // Update job status to processing
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'processing',
+        startedAt: new Date(),
+        progress: 0
+      });
+      
+      const progressCallback = async (progress, status) => {
+        job.progress(progress);
+        
+        // Update database job progress
+        await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+          progress: progress,
+          status: status === 'completed' ? 'completed' : 'processing'
+        });
+        
+        io.emit('job-progress', {
+          jobId: job.data.jobId,
+          progress,
+          status
+        });
+      };
+
+      const result = await processArchiveWithProgress(job.data, progressCallback);
+      
+      // Update job status to completed
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'completed',
+        progress: 100,
+        result: result,
+        completedAt: new Date()
+      });
+      
+      console.log(`Worker ${id} completed archive job ${job.id}`);
+      return result;
+      
+    } catch (error) {
+      console.error(`Worker ${id} failed archive job ${job.id}:`, error);
+      
+      // Update job status to failed
+      await ProcessingJob.findByIdAndUpdate(job.data.jobId, {
+        status: 'failed',
+        error: {
+          message: error.message,
+          stack: error.stack
+        },
+        completedAt: new Date()
+      });
+      
+      io.emit('job-progress', {
+        jobId: job.data.jobId,
+        progress: 0,
+        status: 'failed',
+        error: error.message
+      });
+      
+      throw error;
+    }
+  });
+
   // Graceful shutdown
   process.on('SIGTERM', async () => {
     console.log(`Worker ${id} received SIGTERM, shutting down gracefully`);
@@ -630,6 +695,52 @@ async function waitForJobCompletion(job, timeout) {
     
     checkCompletion();
   });
+}
+
+async function processArchiveWithProgress(data, progressCallback) {
+  const { jobId, inputPath, webhookUrl, webhookSecret, cmsId, parameters } = data;
+  
+  try {
+    progressCallback(0, 'processing');
+    
+    // Create MediaProcessor instance
+    const MediaProcessor = require('./services/MediaProcessor');
+    const mediaProcessor = new MediaProcessor();
+    
+    // Create job object for MediaProcessor
+    const job = {
+      _id: jobId,
+      inputPath,
+      webhookUrl,
+      webhookSecret,
+      cmsId,
+      parameters
+    };
+    
+    // Process archive using MediaProcessor
+    const result = await new Promise((resolve, reject) => {
+      // Override the updateJobStatus method to use our progressCallback
+      mediaProcessor.updateJobStatus = async (jobId, status, progress, result = null, error = null) => {
+        progressCallback(progress, status);
+        
+        if (status === 'completed') {
+          resolve(result);
+        } else if (status === 'failed') {
+          reject(new Error(error));
+        }
+      };
+      
+      // Process the archive
+      mediaProcessor.processArchive(job).catch(reject);
+    });
+    
+    progressCallback(100, 'completed');
+    return result;
+    
+  } catch (error) {
+    progressCallback(0, 'failed');
+    throw error;
+  }
 }
 
 // Graceful shutdown

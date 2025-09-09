@@ -287,6 +287,37 @@ class MediaProcessor {
     }
   }
 
+  async processArchive(job) {
+    try {
+      await this.updateJobStatus(job._id, 'processing', 0);
+      
+      const ArchiveProcessor = require('./ArchiveProcessor');
+      const archiveProcessor = new ArchiveProcessor(this.io);
+      
+      const results = await archiveProcessor.processArchive(
+        job.inputPath,
+        job.webhookUrl,
+        job.webhookSecret,
+        job.cmsId,
+        job.parameters
+      );
+
+      await this.updateJobStatus(job._id, 'completed', 100, {
+        outputPath: job.inputPath,
+        results,
+        totalImages: results.length,
+        format: 'archive'
+      });
+
+      if (job.webhookUrl) {
+        await this.sendWebhook(job);
+      }
+    } catch (error) {
+      console.error('Archive processing failed:', error);
+      await this.updateJobStatus(job._id, 'failed', 0, null, error.message);
+    }
+  }
+
   async sendWebhook(job) {
     try {
       const payload = {

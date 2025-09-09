@@ -9,7 +9,7 @@ const processingJobSchema = new mongoose.Schema({
   type: {
     type: String,
     required: true,
-    enum: ['video-transcode', 'audio-convert', 'image-resize', 'video-thumbnail']
+    enum: ['video-transcode', 'audio-convert', 'image-resize', 'video-thumbnail', 'archive-process']
   },
   status: {
     type: String,

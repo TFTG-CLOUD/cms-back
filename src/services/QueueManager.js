@@ -23,6 +23,7 @@ const queues = {
   audioProcessing: new Queue('audio processing', { redis: redisConnection }),
   imageProcessing: new Queue('image processing', { redis: redisConnection }),
   thumbnailGeneration: new Queue('thumbnail generation', { redis: redisConnection }),
+  archiveProcessing: new Queue('archive processing', { redis: redisConnection }),
   batchProcessing: new Queue('batch processing', { redis: redisConnection })
 };
 
@@ -81,6 +82,9 @@ class QueueManager {
         break;
       case 'video-thumbnail':
         queue = this.queues.thumbnailGeneration;
+        break;
+      case 'archive-process':
+        queue = this.queues.archiveProcessing;
         break;
       case 'batch-process':
         queue = this.queues.batchProcessing;

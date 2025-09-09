@@ -1,22 +1,27 @@
-const fs = require('fs').promises;
+const fs = require('fs');
+const fsPromises = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const { verifySignedUrl } = require('../middleware/auth');
+const File = require('../models/File');
 
 class ChunkedUploadManager {
-  constructor(uploadDir = './uploads/chunks', chunkSize = 5 * 1024 * 1024) {
+  constructor(uploadDir = './uploads/chunks', chunkSize = 5 * 1024 * 1024, sessionTimeout = 24 * 60 * 60 * 1000) {
     this.uploadDir = uploadDir;
     this.chunkSize = chunkSize;
+    this.sessionTimeout = sessionTimeout; // 默认24小时过期
     this.activeUploads = new Map();
+    this.startCleanupTimer();
   }
 
   async initializeUpload(fileInfo) {
-    const { filename, fileSize, contentType, chunkSize = this.chunkSize } = fileInfo;
+    const { filename, fileSize, contentType, chunkSize = this.chunkSize, uploadedBy } = fileInfo;
     
     const uploadId = crypto.randomBytes(32).toString('hex');
     const uploadPath = path.join(this.uploadDir, uploadId);
     
-    await fs.mkdir(uploadPath, { recursive: true });
+    await fsPromises.mkdir(uploadPath, { recursive: true });
     
     const totalChunks = Math.ceil(fileSize / chunkSize);
     
@@ -30,6 +35,8 @@ class ChunkedUploadManager {
       receivedChunks: new Set(),
       uploadPath,
       createdAt: new Date(),
+      expiresAt: new Date(Date.now() + this.sessionTimeout),
+      uploadedBy,
       status: 'initialized'
     };
     
@@ -39,7 +46,8 @@ class ChunkedUploadManager {
       uploadId,
       chunkSize,
       totalChunks,
-      uploadUrl: `/api/upload/chunk/${uploadId}`
+      uploadUrl: `/api/upload/chunk/${uploadId}`,
+      expiresAt: uploadSession.expiresAt
     };
   }
 
@@ -47,6 +55,13 @@ class ChunkedUploadManager {
     const session = this.activeUploads.get(uploadId);
     if (!session) {
       throw new Error('Upload session not found');
+    }
+
+    // 检查是否过期
+    if (Date.now() > session.expiresAt) {
+      this.activeUploads.delete(uploadId);
+      await this.cleanupChunks(uploadId);
+      throw new Error('Upload session expired');
     }
 
     if (session.status === 'completed') {
@@ -60,13 +75,14 @@ class ChunkedUploadManager {
     const chunkFilename = `chunk_${chunkIndex.toString().padStart(6, '0')}`;
     const chunkPath = path.join(session.uploadPath, chunkFilename);
     
-    await fs.writeFile(chunkPath, chunkData);
+    await fsPromises.writeFile(chunkPath, chunkData);
     session.receivedChunks.add(chunkIndex);
     
     const progress = Math.round((session.receivedChunks.size / session.totalChunks) * 100);
     
     if (session.receivedChunks.size === session.totalChunks) {
-      await this.completeUpload(uploadId);
+      console.log('All chunks received, completing upload...');
+      await this.completeUpload(uploadId, session.uploadedBy);
     }
     
     return {
@@ -79,7 +95,7 @@ class ChunkedUploadManager {
     };
   }
 
-  async completeUpload(uploadId) {
+  async completeUpload(uploadId, uploadedBy = null) {
     const session = this.activeUploads.get(uploadId);
     if (!session) {
       throw new Error('Upload session not found');
@@ -89,30 +105,50 @@ class ChunkedUploadManager {
       const finalFilename = `${crypto.randomBytes(16).toString('hex')}_${session.filename}`;
       const finalPath = path.join(process.cwd(), 'uploads', finalFilename);
       
-      const outputStream = fs.createWriteStream(finalPath);
+      // 使用简单的文件写入方式
+      let finalData = Buffer.alloc(0);
       
       for (let i = 0; i < session.totalChunks; i++) {
         const chunkFilename = `chunk_${i.toString().padStart(6, '0')}`;
         const chunkPath = path.join(session.uploadPath, chunkFilename);
-        const chunkData = await fs.readFile(chunkPath);
-        outputStream.write(chunkData);
+        const chunkData = await fsPromises.readFile(chunkPath);
+        finalData = Buffer.concat([finalData, chunkData]);
       }
       
-      outputStream.end();
-      
-      await new Promise((resolve, reject) => {
-        outputStream.on('finish', resolve);
-        outputStream.on('error', reject);
-      });
+      await fsPromises.writeFile(finalPath, finalData);
       
       session.status = 'completed';
       session.finalPath = finalPath;
       session.finalFilename = finalFilename;
       session.completedAt = new Date();
       
+      // 创建数据库记录
+      let fileRecord = null;
+      try {
+        const fileData = {
+          originalName: session.filename,
+          filename: finalFilename,
+          path: finalPath,
+          size: session.fileSize,
+          mimeType: session.contentType
+        };
+
+        // 只有在有有效的 uploadedBy 时才添加该字段
+        if (uploadedBy && mongoose.Types.ObjectId.isValid(uploadedBy)) {
+          fileData.uploadedBy = uploadedBy;
+        }
+
+        fileRecord = new File(fileData);
+        await fileRecord.save();
+        console.log('File record created successfully:', fileRecord._id);
+      } catch (dbError) {
+        console.error('Failed to create file record:', dbError);
+        // 即使数据库记录创建失败，也继续执行
+      }
+      
       await this.cleanupChunks(uploadId);
       
-      return {
+      const result = {
         uploadId,
         status: 'completed',
         filename: session.finalFilename,
@@ -120,6 +156,26 @@ class ChunkedUploadManager {
         size: session.fileSize,
         contentType: session.contentType
       };
+
+      // 如果数据库记录创建成功，添加文件ID
+      if (fileRecord && fileRecord._id) {
+        result.fileId = fileRecord._id;
+        result.fileRecord = {
+          id: fileRecord._id,
+          originalName: fileRecord.originalName,
+          filename: fileRecord.filename,
+          size: fileRecord.size,
+          mimeType: fileRecord.mimeType,
+          uploadDate: fileRecord.uploadDate
+        };
+        
+        // 保存文件ID到会话中
+        session.fileId = fileRecord._id;
+      } else {
+        console.log('File record not available in response');
+      }
+
+      return result;
       
     } catch (error) {
       session.status = 'failed';
@@ -133,7 +189,7 @@ class ChunkedUploadManager {
     if (!session) return;
     
     try {
-      await fs.rmdir(session.uploadPath, { recursive: true });
+      await fsPromises.rmdir(session.uploadPath, { recursive: true });
     } catch (error) {
       console.error('Error cleaning up chunks:', error);
     }
@@ -150,8 +206,15 @@ class ChunkedUploadManager {
     if (!session) {
       return null;
     }
+
+    // 检查是否过期
+    if (Date.now() > session.expiresAt) {
+      this.activeUploads.delete(uploadId);
+      await this.cleanupChunks(uploadId);
+      return null;
+    }
     
-    return {
+    const result = {
       uploadId,
       filename: session.filename,
       fileSize: session.fileSize,
@@ -161,8 +224,20 @@ class ChunkedUploadManager {
       progress: Math.round((session.receivedChunks.size / session.totalChunks) * 100),
       status: session.status,
       createdAt: session.createdAt,
-      completedAt: session.completedAt
+      completedAt: session.completedAt,
+      expiresAt: session.expiresAt
     };
+
+    // 如果上传已完成，添加文件信息
+    if (session.status === 'completed') {
+      result.fileId = session.fileId;
+      result.filename = session.finalFilename;
+      result.path = session.finalPath;
+      result.size = session.fileSize;
+      result.contentType = session.contentType;
+    }
+
+    return result;
   }
 
   async cancelUpload(uploadId) {
@@ -175,6 +250,36 @@ class ChunkedUploadManager {
     await this.cleanupChunks(uploadId);
     
     return { uploadId, status: 'cancelled' };
+  }
+
+  // 启动清理定时器
+  startCleanupTimer() {
+    // 每小时清理一次过期会话
+    setInterval(() => {
+      this.cleanupExpiredSessions();
+    }, 60 * 60 * 1000);
+  }
+
+  // 清理过期会话
+  async cleanupExpiredSessions() {
+    const now = Date.now();
+    const expiredUploads = [];
+    
+    for (const [uploadId, session] of this.activeUploads) {
+      if (now > session.expiresAt) {
+        expiredUploads.push(uploadId);
+      }
+    }
+    
+    for (const uploadId of expiredUploads) {
+      this.activeUploads.delete(uploadId);
+      await this.cleanupChunks(uploadId);
+      console.log(`Cleaned up expired upload session: ${uploadId}`);
+    }
+    
+    if (expiredUploads.length > 0) {
+      console.log(`Cleaned up ${expiredUploads.length} expired upload sessions`);
+    }
   }
 }
 
@@ -210,7 +315,8 @@ const initializeChunkedUpload = async (req, res) => {
       filename,
       fileSize: parseInt(fileSize),
       contentType,
-      chunkSize: chunkSize ? parseInt(chunkSize) : undefined
+      chunkSize: chunkSize ? parseInt(chunkSize) : undefined,
+      uploadedBy: req.apiKey?._id
     });
     
     res.json(result);

@@ -5,14 +5,13 @@ const fs = require('fs').promises;
 const crypto = require('crypto');
 const File = require('../models/File');
 const { authenticateApiKey, validatePermission, generateSignedUrl } = require('../middleware/auth');
-const { 
-  initializeChunkedUpload, 
-  handleChunkedUpload, 
-  getUploadStatus, 
-  completeChunkedUpload, 
-  cancelChunkedUpload 
+const {
+  initializeChunkedUpload,
+  handleChunkedUpload,
+  getUploadStatus,
+  completeChunkedUpload,
+  cancelChunkedUpload
 } = require('../services/ChunkedUploadManager');
-const ArchiveProcessor = require('../services/ArchiveProcessor');
 
 const router = express.Router();
 
@@ -29,7 +28,7 @@ const storage = multer.diskStorage({
   }
 });
 
-const upload = multer({ 
+const upload = multer({
   storage,
   limits: {
     fileSize: 500 * 1024 * 1024 // 500MB limit for regular uploads
@@ -46,14 +45,14 @@ const chunkUpload = multer({
 router.post('/generate-signed-url', authenticateApiKey, validatePermission('upload'), async (req, res) => {
   try {
     const { filename, contentType, expiresIn = 3600 } = req.body;
-    
+
     if (!filename || !contentType) {
       return res.status(400).json({ error: 'Filename and content type are required' });
     }
 
     const fileId = crypto.randomBytes(16).toString('hex');
     const signedUrl = generateSignedUrl(fileId, expiresIn);
-    
+
     res.json({
       uploadUrl: `/api/upload/file/${signedUrl}`,
       fileId,
@@ -71,6 +70,11 @@ router.post('/generate-signed-url', authenticateApiKey, validatePermission('uplo
 
 router.post('/file/:signedToken', authenticateApiKey, validatePermission('upload'), upload.single('file'), async (req, res) => {
   try {
+    req.socket.setTimeout(600000);
+    req.socket.on('timeout', () => {
+      console.log('Socket timeout occurred');
+      res.status(408).send('Upload timeout');
+    });
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }
@@ -90,59 +94,40 @@ router.post('/file/:signedToken', authenticateApiKey, validatePermission('upload
 
     await file.save();
 
-    const archiveProcessor = new ArchiveProcessor(req.app.get('socketio'));
-    
-    if (await archiveProcessor.isArchive(req.file.path)) {
-      if (!callbackUrl) {
-        return res.status(400).json({ error: 'Callback URL is required for archive processing' });
+    // Send callback notification if provided
+    if (callbackUrl) {
+      try {
+        await fetch(callbackUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Webhook-Secret': webhookSecret || '',
+            'X-CMS-ID': cmsId || ''
+          },
+          body: JSON.stringify({
+            fileId: file._id,
+            originalName: file.originalName,
+            filename: file.filename,
+            size: file.size,
+            mimeType: file.mimeType,
+            uploadDate: file.uploadDate,
+            status: 'uploaded'
+          })
+        });
+      } catch (error) {
+        console.error('Failed to send callback:', error);
       }
-
-      const processArchive = async () => {
-        try {
-          const results = await archiveProcessor.processArchive(
-            req.file.path,
-            callbackUrl,
-            webhookSecret,
-            cmsId
-          );
-          
-          await file.updateOne({ 
-            processingStatus: 'completed',
-            processingResult: results
-          });
-        } catch (error) {
-          console.error('Archive processing failed:', error);
-          await file.updateOne({ 
-            processingStatus: 'failed',
-            processingError: error.message
-          });
-        }
-      };
-
-      processArchive();
-
-      res.json({
-        id: file._id,
-        originalName: file.originalName,
-        filename: file.filename,
-        size: file.size,
-        mimeType: file.mimeType,
-        uploadDate: file.uploadDate,
-        isArchive: true,
-        processingStatus: 'processing',
-        message: 'Archive is being processed. Results will be sent to the callback URL.'
-      });
-    } else {
-      res.json({
-        id: file._id,
-        originalName: file.originalName,
-        filename: file.filename,
-        size: file.size,
-        mimeType: file.mimeType,
-        uploadDate: file.uploadDate,
-        isArchive: false
-      });
     }
+
+    res.json({
+      id: file._id,
+      originalName: file.originalName,
+      filename: file.filename,
+      size: file.size,
+      mimeType: file.mimeType,
+      uploadDate: file.uploadDate,
+      message: 'File uploaded successfully'
+    });
   } catch (error) {
     console.error('Error uploading file:', error);
     res.status(500).json({ error: 'Failed to upload file' });
@@ -153,7 +138,7 @@ router.get('/files', authenticateApiKey, validatePermission('read'), async (req,
   try {
     const { page = 1, limit = 10, type } = req.query;
     const query = {};
-    
+
     if (type) {
       query.mimeType = new RegExp(type, 'i');
     }

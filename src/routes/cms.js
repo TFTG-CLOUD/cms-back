@@ -30,12 +30,6 @@ router.post('/upload-url', authenticateApiKey, validatePermission('upload'), asy
         'X-Callback-Url': callbackUrl,
         'X-CMS-ID': cmsId,
         'X-Webhook-Secret': webhookSecret
-      },
-      archiveSupport: {
-        enabled: true,
-        formats: ['zip', '7z'],
-        autoExtract: true,
-        convertImagesToWebp: true
       }
     });
   } catch (error) {
@@ -78,11 +72,17 @@ router.post('/process-file', authenticateApiKey, validatePermission('process'), 
         case 'video-transcode':
           mediaProcessor.processVideo(job);
           break;
+        case 'audio-convert':
+          mediaProcessor.processAudio(job);
+          break;
         case 'image-resize':
           mediaProcessor.processImage(job);
           break;
         case 'video-thumbnail':
           mediaProcessor.generateThumbnail(job);
+          break;
+        case 'archive-process':
+          mediaProcessor.processArchive(job);
           break;
         default:
           mediaProcessor.updateJobStatus(job._id, 'failed', 0, null, 'Unsupported processing type');
