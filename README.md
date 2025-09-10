@@ -2,15 +2,15 @@
 
 A comprehensive file storage and processing system similar to S3 pre-signed URL uploads, built with Express.js, MongoDB, and Socket.IO. Features real-time progress updates for video transcoding and media processing.
 
-一个类似S3预签名URL上传的综合文件存储和处理系统，使用Express.js、MongoDB和Socket.IO构建。具有视频转码和媒体处理的实时进度更新功能。
+一个类似 S3 预签名 URL 上传的综合文件存储和处理系统，使用 Express.js、MongoDB 和 Socket.IO 构建。具有视频转码和媒体处理的实时进度更新功能。
 
 ## Features / 功能特性
 
-- **Secure file uploads** with temporary URLs / 使用临时URL进行安全文件上传
+- **Secure file uploads** with temporary URLs / 使用临时 URL 进行安全文件上传
 - **Local file storage** with organized directory structure / 文件以有组织的目录结构本地存储
-- **Real-time progress updates** via WebSocket / 通过WebSocket进行实时进度更新
-- **API key authentication** with granular permissions / 具有细粒度权限的API密钥认证
-- **Third-party CMS integration** with webhook support / 支持webhook的第三方CMS集成
+- **Real-time progress updates** via WebSocket / 通过 WebSocket 进行实时进度更新
+- **API key authentication** with granular permissions / 具有细粒度权限的 API 密钥认证
+- **Third-party CMS integration** with webhook support / 支持 webhook 的第三方 CMS 集成
 
 ## Table of Contents / 目录
 
@@ -25,22 +25,23 @@ A comprehensive file storage and processing system similar to S3 pre-signed URL 
 - [文件管理](#文件管理-file-management)
   - [文件操作](#文件操作)
   - [批量操作](#批量操作)
-- [Webhook通知](#webhook通知-webhook-notifications)
+- [Webhook 通知](#webhook通知-webhook-notifications)
   - [音频视频图片处理](#音频视频图片处理-webhooks)
   - [压缩包处理](#压缩包处理-webhooks)
-- [Socket.IO实时通信](#socketio实时通信)
+- [Socket.IO 实时通信](#socketio实时通信)
   - [事件类型](#事件类型)
   - [客户端集成](#客户端集成)
 - [安装配置](#安装配置)
-- [API文档](#api文档)
+- [API 文档](#api文档)
 
 ## 预签名上传 (Presigned Uploads)
 
 ### 小文件上传
 
-使用预签名URL进行安全的小文件上传，支持临时URL验证。
+使用预签名 URL 进行安全的小文件上传，支持临时 URL 验证。
 
-**生成签名URL:**
+**生成签名 URL:**
+
 ```http
 POST /api/upload/generate-signed-url
 Content-Type: application/json
@@ -55,6 +56,7 @@ X-API-Secret: your-api-secret
 ```
 
 **响应格式:**
+
 ```json
 {
   "uploadUrl": "/api/upload/file/{signed-token}",
@@ -68,6 +70,7 @@ X-API-Secret: your-api-secret
 ```
 
 **上传文件:**
+
 ```http
 POST /api/upload/file/{signed-token}
 Content-Type: multipart/form-data
@@ -78,6 +81,7 @@ file: [binary data]
 ```
 
 **上传成功响应:**
+
 ```json
 {
   "id": "file-id",
@@ -95,6 +99,7 @@ file: [binary data]
 支持大文件（>5GB）的分块上传，具有断点续传功能。
 
 **初始化切片上传:**
+
 ```http
 POST /api/upload/chunked/init
 Content-Type: application/json
@@ -110,6 +115,7 @@ X-API-Secret: your-api-secret
 ```
 
 **初始化响应格式:**
+
 ```json
 {
   "uploadId": "unique-upload-id",
@@ -121,6 +127,7 @@ X-API-Secret: your-api-secret
 ```
 
 **上传文件块:**
+
 ```http
 POST /api/upload/chunk/{uploadId}
 Content-Type: multipart/form-data
@@ -132,6 +139,7 @@ chunkIndex: 0
 ```
 
 **文件块上传响应格式:**
+
 ```json
 {
   "uploadId": "unique-upload-id",
@@ -144,6 +152,7 @@ chunkIndex: 0
 ```
 
 **完成上传:**
+
 ```http
 POST /api/upload/complete/{uploadId}
 Content-Type: application/json
@@ -152,6 +161,7 @@ X-API-Secret: your-api-secret
 ```
 
 **完成上传响应格式:**
+
 ```json
 {
   "uploadId": "unique-upload-id",
@@ -164,13 +174,15 @@ X-API-Secret: your-api-secret
 ```
 
 **获取上传状态:**
+
 ```http
-GET /api/upload/status/{uploadId}
+GET /api/upload/chunked/status/{uploadId}
 X-API-Key: your-api-key
 X-API-Secret: your-api-secret
 ```
 
 **上传状态响应格式:**
+
 ```json
 {
   "uploadId": "unique-upload-id",
@@ -187,7 +199,6 @@ X-API-Secret: your-api-secret
 }
 ```
 
-
 ## 文件处理 (File Processing)
 
 ### 音频处理 (Audio Processing)
@@ -197,6 +208,7 @@ X-API-Secret: your-api-secret
 **支持的格式:** MP3, AAC, OGG, WAV, FLAC
 
 **处理参数:**
+
 ```json
 {
   "type": "audio-convert",
@@ -211,6 +223,7 @@ X-API-Secret: your-api-secret
 ```
 
 **质量设置:**
+
 - **Low**: 低质量，小文件
 - **Medium**: 中等质量
 - **High**: 高质量
@@ -223,6 +236,7 @@ X-API-Secret: your-api-secret
 **支持的格式:** MP4, WebM, MOV, AVI
 
 **处理参数:**
+
 ```json
 {
   "type": "video-transcode",
@@ -235,7 +249,8 @@ X-API-Secret: your-api-secret
 }
 ```
 
-**HLS流媒体:**
+**HLS 流媒体:**
+
 ```json
 {
   "type": "video-hls",
@@ -253,6 +268,7 @@ X-API-Secret: your-api-secret
 **支持的格式:** JPEG, PNG, WebP
 
 **处理参数:**
+
 ```json
 {
   "type": "image-convert",
@@ -272,6 +288,7 @@ X-API-Secret: your-api-secret
 **支持的格式:** ZIP, 7z
 
 **创建压缩包处理任务:**
+
 ```http
 POST /api/processing/job
 Content-Type: application/json
@@ -293,30 +310,34 @@ X-API-Secret: your-api-secret
 ```
 
 **处理流程:**
+
 1. 验证文件是否为支持的压缩包格式
 2. 安全解压到临时目录（防止路径遍历攻击）
 3. 验证解压内容（文件数量、大小限制）
-4. 提取图片文件并转换为WebP格式
+4. 提取图片文件并转换为 WebP 格式
 5. 清理临时文件
 6. 发送处理结果通知
 
 **安全特性:**
-- **文件数量限制**: 最多5000个文件
-- **大小限制**: 最大2GB解压内容
+
+- **文件数量限制**: 最多 5000 个文件
+- **大小限制**: 最大 2GB 解压内容
 - **路径遍历防护**: 防止恶意路径攻击
-- **超时控制**: 5分钟处理超时
-- **图片数量限制**: 最少5张，最多5000张图片
+- **超时控制**: 5 分钟处理超时
+- **图片数量限制**: 最少 5 张，最多 5000 张图片
 
 **切片上传安全特性:**
-- **会话过期**: 上传会话24小时后自动过期
+
+- **会话过期**: 上传会话 24 小时后自动过期
 - **自动清理**: 每小时清理过期会话和临时文件
 - **状态验证**: 每次操作都会检查会话有效性
 - **资源管理**: 防止未完成的上传占用磁盘空间
 
 **处理参数说明:**
+
 - `extractImages`: 是否提取图片文件
-- `convertToWebp`: 是否转换为WebP格式
-- `quality`: WebP转换质量 (1-100)
+- `convertToWebp`: 是否转换为 WebP 格式
+- `quality`: WebP 转换质量 (1-100)
 - `preserveMetadata`: 是否保留原始元数据
 
 ## 文件管理 (File Management)
@@ -324,6 +345,7 @@ X-API-Secret: your-api-secret
 ### 文件操作
 
 **列出文件:**
+
 ```http
 GET /api/upload/files?page=1&limit=10&type=image
 X-API-Key: your-api-key
@@ -331,6 +353,7 @@ X-API-Secret: your-api-secret
 ```
 
 **下载文件:**
+
 ```http
 GET /api/upload/file/{id}/download
 X-API-Key: your-api-key
@@ -338,6 +361,7 @@ X-API-Secret: your-api-secret
 ```
 
 **删除文件:**
+
 ```http
 DELETE /api/upload/file/{id}
 X-API-Key: your-api-key
@@ -345,6 +369,7 @@ X-API-Secret: your-api-secret
 ```
 
 **获取文件信息:**
+
 ```http
 GET /api/upload/file/{id}
 X-API-Key: your-api-key
@@ -354,6 +379,7 @@ X-API-Secret: your-api-secret
 ### 批量操作
 
 **创建批量处理任务:**
+
 ```http
 POST /api/processing/batch
 Content-Type: application/json
@@ -372,17 +398,19 @@ X-API-Secret: your-api-secret
 ```
 
 **批量任务状态:**
+
 ```http
 GET /api/processing/batch/{batchId}
 X-API-Key: your-api-key
 X-API-Secret: your-api-secret
 ```
 
-## Webhook通知 (Webhook Notifications)
+## Webhook 通知 (Webhook Notifications)
 
 ### 音频视频图片处理 Webhooks
 
 **处理完成通知:**
+
 ```json
 {
   "jobId": "job-id",
@@ -403,6 +431,7 @@ X-API-Secret: your-api-secret
 ```
 
 **处理失败通知:**
+
 ```json
 {
   "jobId": "job-id",
@@ -417,6 +446,7 @@ X-API-Secret: your-api-secret
 ### 压缩包处理 Webhooks
 
 **压缩包处理完成:**
+
 ```json
 {
   "results": [
@@ -442,14 +472,15 @@ X-API-Secret: your-api-secret
 }
 ```
 
-## Socket.IO实时通信
+## Socket.IO 实时通信
 
 ### 事件类型
 
 **任务进度更新:**
+
 ```javascript
-socket.on('job-progress', (data) => {
-  console.log('Job progress:', data);
+socket.on("job-progress", (data) => {
+  console.log("Job progress:", data);
   // data.status: 'processing', 'completed', 'failed'
   // data.progress: 0-100
   // data.result: 处理结果
@@ -457,18 +488,20 @@ socket.on('job-progress', (data) => {
 ```
 
 **批量处理进度:**
+
 ```javascript
-socket.on('batch-progress', (data) => {
-  console.log('Batch progress:', data);
+socket.on("batch-progress", (data) => {
+  console.log("Batch progress:", data);
   // data.completedFiles, data.totalFiles
   // data.progress: 0-100
 });
 ```
 
 **压缩包处理进度:**
+
 ```javascript
-socket.on('archive-progress', (data) => {
-  console.log('Archive progress:', data);
+socket.on("archive-progress", (data) => {
+  console.log("Archive progress:", data);
   // data.progress: 0-100
   // data.currentFile: 当前处理的文件
   // data.processedFiles, data.totalFiles
@@ -477,34 +510,36 @@ socket.on('archive-progress', (data) => {
 
 ### 客户端集成
 
-**JavaScript示例:**
+**JavaScript 示例:**
+
 ```javascript
-const socket = io('http://localhost:3000');
+const socket = io("http://localhost:3000");
 
 // 连接服务器
-socket.on('connect', () => {
-  console.log('Connected to server');
-  
+socket.on("connect", () => {
+  console.log("Connected to server");
+
   // 订阅任务更新
-  socket.emit('subscribe-job', 'job-id');
-  
+  socket.emit("subscribe-job", "job-id");
+
   // 订阅批量更新
-  socket.emit('subscribe-batch', 'batch-id');
-  
+  socket.emit("subscribe-batch", "batch-id");
+
   // 订阅压缩包更新
-  socket.emit('subscribe-archive', 'cms-id');
+  socket.emit("subscribe-archive", "cms-id");
 });
 
 // 监听任务进度
-socket.on('job-progress', (data) => {
-  if (data.status === 'completed') {
-    console.log('Processing completed!');
-    console.log('Output file:', data.result.outputPath);
+socket.on("job-progress", (data) => {
+  if (data.status === "completed") {
+    console.log("Processing completed!");
+    console.log("Output file:", data.result.outputPath);
   }
 });
 ```
 
-**Python示例:**
+**Python 示例:**
+
 ```python
 import socketio
 
@@ -537,6 +572,7 @@ sio.wait()
 ### 安装步骤
 
 1. **克隆仓库并安装依赖:**
+
 ```bash
 git clone <repository-url>
 cd cms-back
@@ -544,6 +580,7 @@ npm install
 ```
 
 2. **安装系统依赖:**
+
 ```bash
 # macOS
 brew install p7zip
@@ -556,12 +593,14 @@ sudo yum install p7zip p7zip-plugins
 ```
 
 3. **配置环境变量:**
+
 ```bash
 cp .env.example .env
 # 编辑.env文件，配置数据库连接等
 ```
 
 4. **启动服务:**
+
 ```bash
 # 开发环境
 npm run dev
@@ -583,11 +622,11 @@ FFPROBE_PATH=/usr/local/bin/ffprobe
 7Z_PATH=/usr/local/bin/7z
 ```
 
-## API文档 (API Documentation)
+## API 文档 (API Documentation)
 
 ### 认证
 
-所有API请求都需要API密钥认证：
+所有 API 请求都需要 API 密钥认证：
 
 ```http
 X-API-Key: your-api-key
@@ -597,7 +636,8 @@ X-API-Secret: your-api-secret
 ### 主要端点
 
 **上传相关:**
-- `POST /api/upload/generate-signed-url` - 生成签名URL
+
+- `POST /api/upload/generate-signed-url` - 生成签名 URL
 - `POST /api/upload/file/{signed-token}` - 上传文件
 - `POST /api/upload/chunked/init` - 初始化切片上传
 - `POST /api/upload/chunk/{uploadId}` - 上传文件块
@@ -605,38 +645,41 @@ X-API-Secret: your-api-secret
 - `GET /api/upload/status/{uploadId}` - 获取上传状态
 
 **文件管理:**
+
 - `GET /api/upload/files` - 列出文件
 - `GET /api/upload/file/{id}` - 获取文件信息
 - `GET /api/upload/file/{id}/download` - 下载文件
 - `DELETE /api/upload/file/{id}` - 删除文件
 
 **处理任务:**
+
 - `POST /api/processing/job` - 创建处理任务
 - `GET /api/processing/job/{id}` - 获取任务状态
 - `GET /api/processing/jobs` - 列出任务
 - `DELETE /api/processing/job/{id}` - 删除任务
 
 **批量处理:**
+
 - `POST /api/processing/batch` - 创建批量处理任务
 - `GET /api/processing/batch/{batchId}` - 获取批量任务状态
 
-详细的API文档请参考各功能章节的具体示例。
+详细的 API 文档请参考各功能章节的具体示例。
 
 ## 安全特性 (Security Features)
 
-- **API密钥认证** - 基于密钥/密钥对的安全访问
-- **请求限流** - 防止API滥用
+- **API 密钥认证** - 基于密钥/密钥对的安全访问
+- **请求限流** - 防止 API 滥用
 - **文件大小限制** - 可配置的上传限制
-- **临时签名URL** - 具有过期时间的安全上传URL
-- **源站验证** - CORS保护和origin验证
-- **安全头** - Helmet安全头配置
+- **临时签名 URL** - 具有过期时间的安全上传 URL
+- **源站验证** - CORS 保护和 origin 验证
+- **安全头** - Helmet 安全头配置
 
 ## 错误处理 (Error Handling)
 
-API返回适当的HTTP状态码和错误消息：
+API 返回适当的 HTTP 状态码和错误消息：
 
 - `400` Bad Request - 无效的请求参数
-- `401` Unauthorized - 无效的API凭据
+- `401` Unauthorized - 无效的 API 凭据
 - `403` Forbidden - 权限不足
 - `404` Not Found - 资源未找到
 - `500` Internal Server Error - 服务器错误
@@ -647,52 +690,52 @@ API返回适当的HTTP状态码和错误消息：
 
 ```javascript
 // 1. 生成签名URL
-const signedResponse = await fetch('/api/upload/generate-signed-url', {
-  method: 'POST',
+const signedResponse = await fetch("/api/upload/generate-signed-url", {
+  method: "POST",
   headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': apiKey,
-    'X-API-Secret': apiSecret
+    "Content-Type": "application/json",
+    "X-API-Key": apiKey,
+    "X-API-Secret": apiSecret,
   },
   body: JSON.stringify({
-    filename: 'video.mp4',
-    contentType: 'video/mp4'
-  })
+    filename: "video.mp4",
+    contentType: "video/mp4",
+  }),
 });
 
 const { uploadUrl } = await signedResponse.json();
 
 // 2. 上传文件
 const formData = new FormData();
-formData.append('file', file);
-await fetch(uploadUrl, { method: 'POST', body: formData });
+formData.append("file", file);
+await fetch(uploadUrl, { method: "POST", body: formData });
 
 // 3. 创建处理任务
-const jobResponse = await fetch('/api/processing/job', {
-  method: 'POST',
+const jobResponse = await fetch("/api/processing/job", {
+  method: "POST",
   headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': apiKey,
-    'X-API-Secret': apiSecret
+    "Content-Type": "application/json",
+    "X-API-Key": apiKey,
+    "X-API-Secret": apiSecret,
   },
   body: JSON.stringify({
-    fileId: 'file-id',
-    type: 'video-transcode',
+    fileId: "file-id",
+    type: "video-transcode",
     parameters: {
       width: 1920,
       height: 1080,
-      format: 'mp4'
+      format: "mp4",
     },
-    webhookUrl: 'https://your-cms.com/webhook'
-  })
+    webhookUrl: "https://your-cms.com/webhook",
+  }),
 });
 
 const { id: jobId } = await jobResponse.json();
 
 // 4. 通过WebSocket监听进度
-const socket = io('http://localhost:3000');
-socket.emit('subscribe-job', jobId);
-socket.on('job-progress', (data) => {
+const socket = io("http://localhost:3000");
+socket.emit("subscribe-job", jobId);
+socket.on("job-progress", (data) => {
   console.log(`Progress: ${data.progress}%`);
 });
 ```
@@ -701,19 +744,19 @@ socket.on('job-progress', (data) => {
 
 ```javascript
 // 初始化切片上传
-const initResponse = await fetch('/api/upload/chunked/init', {
-  method: 'POST',
+const initResponse = await fetch("/api/upload/chunked/init", {
+  method: "POST",
   headers: {
-    'Content-Type': 'application/json',
-    'X-API-Key': apiKey,
-    'X-API-Secret': apiSecret
+    "Content-Type": "application/json",
+    "X-API-Key": apiKey,
+    "X-API-Secret": apiSecret,
   },
   body: JSON.stringify({
-    filename: 'large-video.mp4',
+    filename: "large-video.mp4",
     fileSize: 5368709120, // 5GB
-    contentType: 'video/mp4',
-    chunkSize: 5242880 // 5MB chunks
-  })
+    contentType: "video/mp4",
+    chunkSize: 5242880, // 5MB chunks
+  }),
 });
 
 const { uploadId, totalChunks } = await initResponse.json();
@@ -722,26 +765,26 @@ const { uploadId, totalChunks } = await initResponse.json();
 for (let i = 0; i < totalChunks; i++) {
   const chunk = getChunkData(i);
   const formData = new FormData();
-  formData.append('chunk', chunk);
-  formData.append('chunkIndex', i);
-  
+  formData.append("chunk", chunk);
+  formData.append("chunkIndex", i);
+
   await fetch(`/api/upload/chunked/upload/${uploadId}`, {
-    method: 'POST',
+    method: "POST",
     body: formData,
     headers: {
-      'X-API-Key': apiKey,
-      'X-API-Secret': apiSecret
-    }
+      "X-API-Key": apiKey,
+      "X-API-Secret": apiSecret,
+    },
   });
 }
 
 // 完成上传
 await fetch(`/api/upload/chunked/complete/${uploadId}`, {
-  method: 'POST',
+  method: "POST",
   headers: {
-    'X-API-Key': apiKey,
-    'X-API-Secret': apiSecret
-  }
+    "X-API-Key": apiKey,
+    "X-API-Secret": apiSecret,
+  },
 });
 ```
 
