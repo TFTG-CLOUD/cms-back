@@ -13,6 +13,14 @@ const fileSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  storageKey: {
+    type: String,
+    required: false
+  },
+  storageDriver: {
+    type: String,
+    default: 'local'
+  },
   size: {
     type: Number,
     required: true
@@ -20,6 +28,10 @@ const fileSchema = new mongoose.Schema({
   mimeType: {
     type: String,
     required: true
+  },
+  isPublic: {
+    type: Boolean,
+    default: false
   },
   uploadedBy: {
     type: mongoose.Schema.Types.ObjectId,
@@ -51,5 +63,6 @@ fileSchema.index({ processingStatus: 1 });
 fileSchema.index({ uploadedBy: 1, uploadDate: -1 });
 fileSchema.index({ mimeType: 1 });
 fileSchema.index({ filename: 1 });
+fileSchema.index({ storageKey: 1 });
 
 module.exports = mongoose.model('File', fileSchema);

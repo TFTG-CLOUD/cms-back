@@ -1,26 +1,38 @@
 const ffmpeg = require('fluent-ffmpeg');
 const sharp = require('sharp');
+const os = require('os');
 const path = require('path');
 const fs = require('fs').promises;
 const ProcessingJob = require('../models/ProcessingJob');
 const File = require('../models/File');
 const AudioAnalyzer = require('./AudioAnalyzer');
+const { getStorageService } = require('./storage/StorageService');
+const { buildProcessedObjectKey } = require('./storage/ObjectKeyHelper');
+const { detectContentType } = require('./ImageVariantService');
+const { buildProtectedObjectUrl } = require('./PublicAssetService');
 
 class MediaProcessor {
-  constructor(io) {
+  constructor(io, storageService = getStorageService()) {
     this.io = io;
     this.audioAnalyzer = new AudioAnalyzer();
+    this.storage = storageService;
   }
 
   async processVideo(job) {
+    let tempInputPath = null;
+    let outputPath = null;
+
     try {
       await this.updateJobStatus(job._id, 'processing', 0);
-      
-      const outputPath = path.join(process.cwd(), 'public', 'processed', `${job._id}_${path.basename(job.inputPath, path.extname(job.inputPath))}.${job.parameters.format || 'mp4'}`);
-      
-      await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
-      const ffmpegCommand = ffmpeg(job.inputPath)
+      tempInputPath = await this.storage.materializeToFile(job.inputStorageKey || job.inputPath);
+      outputPath = await this.createTempOutputPath(
+        job._id,
+        tempInputPath,
+        job.parameters.format || 'mp4'
+      );
+
+      const ffmpegCommand = ffmpeg(tempInputPath)
         .output(outputPath)
         .videoCodec('libx264')
         .audioCodec('aac');
@@ -50,39 +62,47 @@ class MediaProcessor {
         duration = data.duration;
       });
 
-      ffmpegCommand.on('end', async () => {
-        const stats = await fs.stat(outputPath);
-        await this.updateJobStatus(job._id, 'completed', 100, {
-          outputPath,
-          size: stats.size,
-          format: job.parameters.format || 'mp4'
-        });
-      });
-
-      ffmpegCommand.on('error', async (err) => {
-        await this.updateJobStatus(job._id, 'failed', 0, null, err.message);
-      });
-
       await new Promise((resolve, reject) => {
+        ffmpegCommand.on('end', async () => {
+          try {
+            await this.storeProcessedOutput(job, outputPath, job.parameters.format || 'mp4');
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+
+        ffmpegCommand.on('error', async (err) => {
+          await this.updateJobStatus(job._id, 'failed', 0, null, err.message);
+          reject(err);
+        });
+
         ffmpegCommand.run();
-        ffmpegCommand.on('end', resolve);
-        ffmpegCommand.on('error', reject);
       });
 
     } catch (error) {
       await this.updateJobStatus(job._id, 'failed', 0, null, error.message);
+    } finally {
+      await this.cleanupTempInput(tempInputPath);
+      await this.cleanupTempOutput(outputPath);
     }
   }
 
   async processAudio(job) {
+    let tempInputPath = null;
+    let outputPath = null;
+
     try {
       await this.updateJobStatus(job._id, 'processing', 0);
-      
-      const outputPath = path.join(process.cwd(), 'public', 'processed', `${job._id}_${path.basename(job.inputPath, path.extname(job.inputPath))}.${job.parameters.format || 'mp3'}`);
-      
-      await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
-      const ffmpegCommand = ffmpeg(job.inputPath)
+      tempInputPath = await this.storage.materializeToFile(job.inputStorageKey || job.inputPath);
+      outputPath = await this.createTempOutputPath(
+        job._id,
+        tempInputPath,
+        job.parameters.format || 'mp3'
+      );
+
+      const ffmpegCommand = ffmpeg(tempInputPath)
         .output(outputPath)
         .audioCodec('libmp3lame')
         .audioBitrate(job.parameters.bitrate || '128k')
@@ -106,35 +126,35 @@ class MediaProcessor {
         }
       });
 
-      ffmpegCommand.on('end', async () => {
-        const stats = await fs.stat(outputPath);
-        
-        // Extract audio metadata
-        const metadata = await this.extractAudioMetadata(outputPath);
-        
-        await this.updateJobStatus(job._id, 'completed', 100, {
-          outputPath,
-          size: stats.size,
-          format: job.parameters.format || 'mp3',
-          duration: metadata.duration,
-          bitrate: metadata.bitrate,
-          sampleRate: metadata.sampleRate,
-          channels: metadata.channels
-        });
-      });
-
-      ffmpegCommand.on('error', async (err) => {
-        await this.updateJobStatus(job._id, 'failed', 0, null, err.message);
-      });
-
       await new Promise((resolve, reject) => {
+        ffmpegCommand.on('end', async () => {
+          try {
+            const metadata = await this.extractAudioMetadata(outputPath);
+            await this.storeProcessedOutput(job, outputPath, job.parameters.format || 'mp3', {
+              duration: metadata.duration,
+              bitrate: metadata.bitrate,
+              sampleRate: metadata.sampleRate,
+              channels: metadata.channels
+            });
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        });
+
+        ffmpegCommand.on('error', async (err) => {
+          await this.updateJobStatus(job._id, 'failed', 0, null, err.message);
+          reject(err);
+        });
+
         ffmpegCommand.run();
-        ffmpegCommand.on('end', resolve);
-        ffmpegCommand.on('error', reject);
       });
 
     } catch (error) {
       await this.updateJobStatus(job._id, 'failed', 0, null, error.message);
+    } finally {
+      await this.cleanupTempInput(tempInputPath);
+      await this.cleanupTempOutput(outputPath);
     }
   }
 
@@ -164,14 +184,20 @@ class MediaProcessor {
   }
 
   async processImage(job) {
+    let tempInputPath = null;
+    let outputPath = null;
+
     try {
       await this.updateJobStatus(job._id, 'processing', 0);
-      
-      const outputPath = path.join(process.cwd(), 'public', 'processed', `${job._id}_${path.basename(job.inputPath, path.extname(job.inputPath))}.${job.parameters.format || 'jpg'}`);
-      
-      await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
-      let pipeline = sharp(job.inputPath);
+      tempInputPath = await this.storage.materializeToFile(job.inputStorageKey || job.inputPath);
+      outputPath = await this.createTempOutputPath(
+        job._id,
+        tempInputPath,
+        job.parameters.format || 'jpg'
+      );
+
+      let pipeline = sharp(tempInputPath);
 
       if (job.parameters.width && job.parameters.height) {
         pipeline = pipeline.resize(job.parameters.width, job.parameters.height);
@@ -189,53 +215,59 @@ class MediaProcessor {
 
       await pipeline.toFile(outputPath);
 
-      const stats = await fs.stat(outputPath);
       const metadata = await sharp(outputPath).metadata();
 
-      await this.updateJobStatus(job._id, 'completed', 100, {
-        outputPath,
-        size: stats.size,
-        format: job.parameters.format || 'jpg',
+      await this.storeProcessedOutput(job, outputPath, job.parameters.format || 'jpg', {
         width: metadata.width,
         height: metadata.height
       });
 
     } catch (error) {
       await this.updateJobStatus(job._id, 'failed', 0, null, error.message);
+    } finally {
+      await this.cleanupTempInput(tempInputPath);
+      await this.cleanupTempOutput(outputPath);
     }
   }
 
   async generateThumbnail(job) {
+    let tempInputPath = null;
+    let outputPath = null;
+
     try {
       await this.updateJobStatus(job._id, 'processing', 0);
-      
-      const outputPath = path.join(process.cwd(), 'public', 'processed', `${job._id}_thumb.jpg`);
-      
-      await fs.mkdir(path.dirname(outputPath), { recursive: true });
 
+      tempInputPath = await this.storage.materializeToFile(job.inputStorageKey || job.inputPath);
+      outputPath = await this.createTempOutputPath(job._id, tempInputPath, 'jpg');
       const time = job.parameters.thumbnailTime || 1;
 
-      ffmpeg(job.inputPath)
-        .screenshots({
-          timestamps: [time],
-          filename: path.basename(outputPath),
-          folder: path.dirname(outputPath),
-          size: job.parameters.size || '320x240'
-        })
-        .on('end', async () => {
-          const stats = await fs.stat(outputPath);
-          await this.updateJobStatus(job._id, 'completed', 100, {
-            outputPath,
-            size: stats.size,
-            format: 'jpg'
+      await new Promise((resolve, reject) => {
+        ffmpeg(tempInputPath)
+          .screenshots({
+            timestamps: [time],
+            filename: path.basename(outputPath),
+            folder: path.dirname(outputPath),
+            size: job.parameters.size || '320x240'
+          })
+          .on('end', async () => {
+            try {
+              await this.storeProcessedOutput(job, outputPath, 'jpg');
+              resolve();
+            } catch (error) {
+              reject(error);
+            }
+          })
+          .on('error', async (err) => {
+            await this.updateJobStatus(job._id, 'failed', 0, null, err.message);
+            reject(err);
           });
-        })
-        .on('error', async (err) => {
-          await this.updateJobStatus(job._id, 'failed', 0, null, err.message);
-        });
+      });
 
     } catch (error) {
       await this.updateJobStatus(job._id, 'failed', 0, null, error.message);
+    } finally {
+      await this.cleanupTempInput(tempInputPath);
+      await this.cleanupTempOutput(outputPath);
     }
   }
 
@@ -288,14 +320,17 @@ class MediaProcessor {
   }
 
   async processArchive(job) {
+    let tempInputPath = null;
+
     try {
       await this.updateJobStatus(job._id, 'processing', 0);
-      
+
+      tempInputPath = await this.storage.materializeToFile(job.inputStorageKey || job.inputPath);
       const ArchiveProcessor = require('./ArchiveProcessor');
-      const archiveProcessor = new ArchiveProcessor(this.io);
+      const archiveProcessor = new ArchiveProcessor(this.io, this.storage);
       
       const results = await archiveProcessor.processArchive(
-        job.inputPath,
+        tempInputPath,
         job.webhookUrl,
         job.webhookSecret,
         job.cmsId,
@@ -303,19 +338,61 @@ class MediaProcessor {
       );
 
       await this.updateJobStatus(job._id, 'completed', 100, {
-        outputPath: job.inputPath,
+        outputPath: job.inputStorageKey || job.inputPath,
         results,
         totalImages: results.length,
         format: 'archive'
       });
-
-      if (job.webhookUrl) {
-        await this.sendWebhook(job);
-      }
     } catch (error) {
       console.error('Archive processing failed:', error);
       await this.updateJobStatus(job._id, 'failed', 0, null, error.message);
+    } finally {
+      await this.cleanupTempInput(tempInputPath);
     }
+  }
+
+  async createTempOutputPath(jobId, inputPath, extension) {
+    const tempDir = path.join(os.tmpdir(), 'cms-processed');
+    await fs.mkdir(tempDir, { recursive: true });
+
+    const baseName = path.basename(inputPath, path.extname(inputPath));
+    return path.join(tempDir, `${jobId}_${baseName}.${extension}`);
+  }
+
+  async storeProcessedOutput(job, localOutputPath, format, extra = {}) {
+    const contentType = detectContentType(format, 'application/octet-stream');
+    const storageFilename = path.basename(localOutputPath);
+    const storageKey = buildProcessedObjectKey(storageFilename);
+
+    await this.storage.putFile(storageKey, localOutputPath, { contentType });
+
+    const stats = await fs.stat(localOutputPath);
+    await this.updateJobStatus(job._id, 'completed', 100, {
+      outputPath: storageKey,
+      storageKey,
+      size: stats.size,
+      format,
+      contentType,
+      url: buildProtectedObjectUrl(storageKey),
+      publicUrl: null,
+      ...extra
+    });
+  }
+
+  async cleanupTempInput(tempInputPath) {
+    if (!tempInputPath || this.storage.driverName !== 's3') {
+      return;
+    }
+
+    await fs.rm(tempInputPath, { force: true });
+  }
+
+  async cleanupTempOutput(outputPath) {
+    if (!outputPath) {
+      return;
+    }
+
+    await fs.rm(outputPath, { force: true });
   }
 
   async sendWebhook(job) {

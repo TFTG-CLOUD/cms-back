@@ -1,9 +1,18 @@
 const crypto = require('crypto');
 const ApiKey = require('../models/ApiKey');
+const { getEnvApiKeyRecord } = require('../config/runtime');
 
 class DatabaseInitializer {
   static async initializeDefaultApiKey() {
     try {
+      if (getEnvApiKeyRecord()) {
+        console.log('🔐 Environment API key configuration detected. Skipping database key initialization.');
+        return {
+          success: false,
+          message: 'Environment API key configuration is active'
+        };
+      }
+
       // 检查是否已有API密钥
       const existingKeyCount = await ApiKey.countDocuments();
       

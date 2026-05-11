@@ -26,10 +26,11 @@ const processingJobSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  inputStorageKey: String,
   outputPath: {
-    type: String,
-    required: true
+    type: String
   },
+  outputStorageKey: String,
   parameters: {
     width: Number,
     height: Number,
@@ -40,9 +41,16 @@ const processingJobSchema = new mongoose.Schema({
   },
   result: {
     outputPath: String,
+    storageKey: String,
     size: Number,
     duration: Number,
-    format: String
+    format: String,
+    contentType: String,
+    width: Number,
+    height: Number,
+    results: [mongoose.Schema.Types.Mixed],
+    totalImages: Number,
+    url: String
   },
   error: {
     message: String,

@@ -3,20 +3,32 @@ const fsPromises = require('fs').promises;
 const path = require('path');
 const crypto = require('crypto');
 const mongoose = require('mongoose');
-const { verifySignedUrl } = require('../middleware/auth');
 const File = require('../models/File');
+const { getRuntimeConfig } = require('../config/runtime');
+const { getStorageService } = require('./storage/StorageService');
+const { isPublicUploadRequest } = require('./UploadAccessService');
+const {
+  buildProtectedFileUrl,
+  buildPublicFileUrl
+} = require('./PublicAssetService');
 
 class ChunkedUploadManager {
-  constructor(uploadDir = './uploads/chunks', chunkSize = 5 * 1024 * 1024, sessionTimeout = 24 * 60 * 60 * 1000) {
+  constructor(
+    uploadDir = getRuntimeConfig().paths.chunkDir,
+    chunkSize = 5 * 1024 * 1024,
+    sessionTimeout = 24 * 60 * 60 * 1000,
+    storageService = getStorageService()
+  ) {
     this.uploadDir = uploadDir;
     this.chunkSize = chunkSize;
     this.sessionTimeout = sessionTimeout; // 默认24小时过期
+    this.storage = storageService;
     this.activeUploads = new Map();
     this.startCleanupTimer();
   }
 
   async initializeUpload(fileInfo) {
-    const { filename, fileSize, contentType, chunkSize = this.chunkSize, uploadedBy } = fileInfo;
+    const { filename, fileSize, contentType, chunkSize = this.chunkSize, uploadedBy, isPublic = false } = fileInfo;
     
     const uploadId = crypto.randomBytes(32).toString('hex');
     const uploadPath = path.join(this.uploadDir, uploadId);
@@ -37,6 +49,7 @@ class ChunkedUploadManager {
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + this.sessionTimeout),
       uploadedBy,
+      isPublic,
       status: 'initialized'
     };
     
@@ -46,7 +59,7 @@ class ChunkedUploadManager {
       uploadId,
       chunkSize,
       totalChunks,
-      uploadUrl: `/api/upload/chunk/${uploadId}`,
+      uploadUrl: `/api/upload/chunked/upload/${uploadId}`,
       expiresAt: uploadSession.expiresAt
     };
   }
@@ -101,25 +114,49 @@ class ChunkedUploadManager {
       throw new Error('Upload session not found');
     }
 
+    if (session.status === 'completed') {
+      return {
+        uploadId,
+        status: 'completed',
+        filename: session.finalFilename,
+        path: session.finalPath,
+        storageKey: session.storageKey,
+        size: session.fileSize,
+        contentType: session.contentType,
+        isPublic: session.isPublic,
+        fileId: session.fileId,
+        url: session.fileId ? buildProtectedFileUrl(session.fileId) : undefined,
+        publicUrl: session.isPublic && session.fileId ? buildPublicFileUrl(session.fileId) : null
+      };
+    }
+
+    if (session.receivedChunks.size !== session.totalChunks) {
+      throw new Error('Upload is incomplete');
+    }
+
     try {
       const finalFilename = `${crypto.randomBytes(16).toString('hex')}_${session.filename}`;
-      const finalPath = path.join(process.cwd(), 'uploads', finalFilename);
+      const finalPath = path.join(getRuntimeConfig().paths.uploadDir, `.assembled_${finalFilename}`);
+      const storageKey = path.posix.join('uploads', finalFilename);
+      await fsPromises.mkdir(path.dirname(finalPath), { recursive: true });
       
-      // 使用简单的文件写入方式
-      let finalData = Buffer.alloc(0);
+      await fsPromises.writeFile(finalPath, Buffer.alloc(0));
       
       for (let i = 0; i < session.totalChunks; i++) {
         const chunkFilename = `chunk_${i.toString().padStart(6, '0')}`;
         const chunkPath = path.join(session.uploadPath, chunkFilename);
         const chunkData = await fsPromises.readFile(chunkPath);
-        finalData = Buffer.concat([finalData, chunkData]);
+        await fsPromises.appendFile(finalPath, chunkData);
       }
-      
-      await fsPromises.writeFile(finalPath, finalData);
+
+      await this.storage.putFile(storageKey, finalPath, {
+        contentType: session.contentType
+      });
       
       session.status = 'completed';
-      session.finalPath = finalPath;
+      session.finalPath = storageKey;
       session.finalFilename = finalFilename;
+      session.storageKey = storageKey;
       session.completedAt = new Date();
       
       // 创建数据库记录
@@ -128,9 +165,12 @@ class ChunkedUploadManager {
         const fileData = {
           originalName: session.filename,
           filename: finalFilename,
-          path: finalPath,
+          path: storageKey,
+          storageKey,
+          storageDriver: this.storage.driverName,
           size: session.fileSize,
-          mimeType: session.contentType
+          mimeType: session.contentType,
+          isPublic: session.isPublic
         };
 
         // 只有在有有效的 uploadedBy 时才添加该字段
@@ -152,20 +192,25 @@ class ChunkedUploadManager {
         uploadId,
         status: 'completed',
         filename: session.finalFilename,
-        path: finalPath,
+        path: storageKey,
+        storageKey,
         size: session.fileSize,
-        contentType: session.contentType
+        contentType: session.contentType,
+        isPublic: session.isPublic
       };
 
       // 如果数据库记录创建成功，添加文件ID
       if (fileRecord && fileRecord._id) {
         result.fileId = fileRecord._id;
+        result.url = buildProtectedFileUrl(fileRecord._id);
+        result.publicUrl = session.isPublic ? buildPublicFileUrl(fileRecord._id) : null;
         result.fileRecord = {
           id: fileRecord._id,
           originalName: fileRecord.originalName,
           filename: fileRecord.filename,
           size: fileRecord.size,
           mimeType: fileRecord.mimeType,
+          isPublic: fileRecord.isPublic,
           uploadDate: fileRecord.uploadDate
         };
         
@@ -175,6 +220,7 @@ class ChunkedUploadManager {
         console.log('File record not available in response');
       }
 
+      await fsPromises.rm(finalPath, { force: true });
       return result;
       
     } catch (error) {
@@ -189,15 +235,19 @@ class ChunkedUploadManager {
     if (!session) return;
     
     try {
-      await fsPromises.rmdir(session.uploadPath, { recursive: true });
+      await fsPromises.rm(session.uploadPath, { recursive: true, force: true });
     } catch (error) {
       console.error('Error cleaning up chunks:', error);
     }
     
     if (session.status === 'completed' || session.status === 'failed') {
-      setTimeout(() => {
+      const cleanupTimeout = setTimeout(() => {
         this.activeUploads.delete(uploadId);
       }, 24 * 60 * 60 * 1000); // Keep for 24 hours
+
+      if (typeof cleanupTimeout.unref === 'function') {
+        cleanupTimeout.unref();
+      }
     }
   }
 
@@ -223,6 +273,7 @@ class ChunkedUploadManager {
       receivedChunks: session.receivedChunks.size,
       progress: Math.round((session.receivedChunks.size / session.totalChunks) * 100),
       status: session.status,
+      isPublic: session.isPublic,
       createdAt: session.createdAt,
       completedAt: session.completedAt,
       expiresAt: session.expiresAt
@@ -233,8 +284,11 @@ class ChunkedUploadManager {
       result.fileId = session.fileId;
       result.filename = session.finalFilename;
       result.path = session.finalPath;
+      result.storageKey = session.storageKey;
       result.size = session.fileSize;
       result.contentType = session.contentType;
+      result.url = session.fileId ? buildProtectedFileUrl(session.fileId) : undefined;
+      result.publicUrl = session.isPublic && session.fileId ? buildPublicFileUrl(session.fileId) : null;
     }
 
     return result;
@@ -255,9 +309,13 @@ class ChunkedUploadManager {
   // 启动清理定时器
   startCleanupTimer() {
     // 每小时清理一次过期会话
-    setInterval(() => {
+    this.cleanupTimer = setInterval(() => {
       this.cleanupExpiredSessions();
     }, 60 * 60 * 1000);
+
+    if (typeof this.cleanupTimer.unref === 'function') {
+      this.cleanupTimer.unref();
+    }
   }
 
   // 清理过期会话
@@ -290,11 +348,16 @@ const handleChunkedUpload = async (req, res) => {
     const { uploadId } = req.params;
     const { chunkIndex } = req.body;
     
-    if (!req.file || !chunkIndex) {
+    if (!req.file || chunkIndex === undefined || chunkIndex === null || chunkIndex === '') {
       return res.status(400).json({ error: 'Chunk data and chunk index are required' });
     }
-    
-    const result = await uploadManager.uploadChunk(uploadId, parseInt(chunkIndex), req.file.buffer);
+
+    const parsedChunkIndex = Number.parseInt(chunkIndex, 10);
+    if (!Number.isInteger(parsedChunkIndex) || parsedChunkIndex < 0) {
+      return res.status(400).json({ error: 'Chunk index must be a non-negative integer' });
+    }
+
+    const result = await uploadManager.uploadChunk(uploadId, parsedChunkIndex, req.file.buffer);
     res.json(result);
     
   } catch (error) {
@@ -316,7 +379,8 @@ const initializeChunkedUpload = async (req, res) => {
       fileSize: parseInt(fileSize),
       contentType,
       chunkSize: chunkSize ? parseInt(chunkSize) : undefined,
-      uploadedBy: req.apiKey?._id
+      uploadedBy: req.apiKey?._id,
+      isPublic: isPublicUploadRequest(req.headers)
     });
     
     res.json(result);

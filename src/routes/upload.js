@@ -3,8 +3,22 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs').promises;
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const File = require('../models/File');
-const { authenticateApiKey, validatePermission, generateSignedUrl } = require('../middleware/auth');
+const {
+  authenticateApiKey,
+  validatePermission,
+  generateSignedUrl,
+  validateSignedUploadToken
+} = require('../middleware/auth');
+const { getRuntimeConfig } = require('../config/runtime');
+const { getStorageService } = require('../services/storage/StorageService');
+const { buildOriginalObjectKey } = require('../services/storage/ObjectKeyHelper');
+const { isPublicUploadRequest } = require('../services/UploadAccessService');
+const {
+  buildProtectedFileUrl,
+  buildPublicFileUrl
+} = require('../services/PublicAssetService');
 const {
   initializeChunkedUpload,
   handleChunkedUpload,
@@ -17,7 +31,8 @@ const router = express.Router();
 
 const storage = multer.diskStorage({
   destination: async (req, file, cb) => {
-    const uploadDir = path.join(process.cwd(), 'uploads');
+    const { paths } = getRuntimeConfig();
+    const uploadDir = paths.uploadDir;
     await fs.mkdir(uploadDir, { recursive: true });
     cb(null, uploadDir);
   },
@@ -68,7 +83,7 @@ router.post('/generate-signed-url', authenticateApiKey, validatePermission('uplo
   }
 });
 
-router.post('/file/:signedToken', authenticateApiKey, validatePermission('upload'), upload.single('file'), async (req, res) => {
+router.post('/file/:signedToken', authenticateApiKey, validatePermission('upload'), validateSignedUploadToken, upload.single('file'), async (req, res) => {
   try {
     req.socket.setTimeout(600000);
     req.socket.on('timeout', () => {
@@ -79,20 +94,39 @@ router.post('/file/:signedToken', authenticateApiKey, validatePermission('upload
       return res.status(400).json({ error: 'No file uploaded' });
     }
 
+    const isPublic = isPublicUploadRequest(req.headers);
+    const storage = getStorageService();
+    const storageKey = buildOriginalObjectKey(req.file.filename);
+    await storage.putFile(storageKey, req.file.path, {
+      contentType: req.file.mimetype
+    });
+
     const callbackUrl = req.headers['x-callback-url'];
     const webhookSecret = req.headers['x-webhook-secret'];
     const cmsId = req.headers['x-cms-id'];
 
-    const file = new File({
+    const fileData = {
       originalName: req.file.originalname,
       filename: req.file.filename,
-      path: req.file.path,
+      path: storageKey,
+      storageKey,
+      storageDriver: storage.driverName,
       size: req.file.size,
       mimeType: req.file.mimetype,
-      uploadedBy: req.apiKey._id
-    });
+      isPublic
+    };
+
+    if (req.apiKey?._id && mongoose.Types.ObjectId.isValid(req.apiKey._id)) {
+      fileData.uploadedBy = req.apiKey._id;
+    }
+
+    const file = new File(fileData);
 
     await file.save();
+
+    if (storage.driverName !== 'local') {
+      await fs.rm(req.file.path, { force: true });
+    }
 
     // Send callback notification if provided
     if (callbackUrl) {
@@ -108,8 +142,10 @@ router.post('/file/:signedToken', authenticateApiKey, validatePermission('upload
             fileId: file._id,
             originalName: file.originalName,
             filename: file.filename,
+            storageKey: file.storageKey,
             size: file.size,
             mimeType: file.mimeType,
+            isPublic: file.isPublic,
             uploadDate: file.uploadDate,
             status: 'uploaded'
           })
@@ -123,9 +159,13 @@ router.post('/file/:signedToken', authenticateApiKey, validatePermission('upload
       id: file._id,
       originalName: file.originalName,
       filename: file.filename,
+      storageKey: file.storageKey,
       size: file.size,
       mimeType: file.mimeType,
+      isPublic: file.isPublic,
       uploadDate: file.uploadDate,
+      url: buildProtectedFileUrl(file._id),
+      publicUrl: file.isPublic ? buildPublicFileUrl(file._id) : null,
       message: 'File uploaded successfully'
     });
   } catch (error) {
@@ -170,7 +210,15 @@ router.get('/file/:id/download', authenticateApiKey, validatePermission('read'),
       return res.status(404).json({ error: 'File not found' });
     }
 
-    res.download(file.path, file.originalName);
+    const storage = getStorageService();
+    const storageKey = file.storageKey || file.path;
+    const localPath = await storage.materializeToFile(storageKey);
+
+    res.download(localPath, file.originalName, async () => {
+      if (storage.driverName === 's3') {
+        await fs.rm(localPath, { force: true });
+      }
+    });
   } catch (error) {
     console.error('Error downloading file:', error);
     res.status(500).json({ error: 'Failed to download file' });
@@ -184,7 +232,8 @@ router.delete('/file/:id', authenticateApiKey, validatePermission('delete'), asy
       return res.status(404).json({ error: 'File not found' });
     }
 
-    await fs.unlink(file.path);
+    const storage = getStorageService();
+    await storage.deleteObject(file.storageKey || file.path);
     await File.findByIdAndDelete(req.params.id);
 
     res.json({ message: 'File deleted successfully' });

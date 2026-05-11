@@ -2,3 +2,4 @@ node_modules
 .claude
 yarn.lock
 package-lock.json
+.env

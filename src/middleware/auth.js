@@ -1,6 +1,18 @@
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const ApiKey = require('../models/ApiKey');
+const { getEnvApiKeyRecord } = require('../config/runtime');
+
+function safeCompare(left, right) {
+  const leftBuffer = Buffer.from(left || '', 'utf8');
+  const rightBuffer = Buffer.from(right || '', 'utf8');
+
+  if (leftBuffer.length !== rightBuffer.length) {
+    return false;
+  }
+
+  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
 
 const authenticateApiKey = async (req, res, next) => {
   try {
@@ -9,6 +21,16 @@ const authenticateApiKey = async (req, res, next) => {
     
     if (!apiKey || !apiSecret) {
       return res.status(401).json({ error: 'API key and secret are required' });
+    }
+
+    const envApiKey = getEnvApiKeyRecord();
+    if (envApiKey && apiKey === envApiKey.apiKey) {
+      if (!safeCompare(apiSecret, process.env.API_SECRET || '')) {
+        return res.status(401).json({ error: 'Invalid API secret' });
+      }
+
+      req.apiKey = envApiKey;
+      return next();
     }
 
     const key = await ApiKey.findOne({ apiKey, isActive: true });
@@ -50,6 +72,18 @@ const verifySignedUrl = (token) => {
   }
 };
 
+const validateSignedUploadToken = (req, res, next) => {
+  const signedToken = req.params.signedToken;
+  const payload = verifySignedUrl(signedToken);
+
+  if (!payload) {
+    return res.status(401).json({ error: 'Invalid or expired signed upload token' });
+  }
+
+  req.signedUpload = payload;
+  next();
+};
+
 const validatePermission = (permission) => {
   return (req, res, next) => {
     if (!req.apiKey.permissions.includes(permission)) {
@@ -63,5 +97,6 @@ module.exports = {
   authenticateApiKey,
   generateSignedUrl,
   verifySignedUrl,
+  validateSignedUploadToken,
   validatePermission
 };

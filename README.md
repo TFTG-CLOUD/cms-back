@@ -80,6 +80,8 @@ X-API-Secret: your-api-secret
 file: [binary data]
 ```
 
+上传时会校验 `{signed-token}` 的有效期和签名内容，不能再用任意字符串绕过上传校验。
+
 **上传成功响应:**
 
 ```json
@@ -87,9 +89,11 @@ file: [binary data]
   "id": "file-id",
   "originalName": "image.jpg",
   "filename": "unique-filename.jpg",
+  "storageKey": "uploads/unique-filename.jpg",
   "size": 1024000,
   "mimeType": "image/jpeg",
   "uploadDate": "2023-01-01T00:00:00.000Z",
+  "url": "/api/processed/file/file-id",
   "message": "File uploaded successfully"
 }
 ```
@@ -121,7 +125,7 @@ X-API-Secret: your-api-secret
   "uploadId": "unique-upload-id",
   "chunkSize": 5242880,
   "totalChunks": 1024,
-  "uploadUrl": "/api/upload/chunk/unique-upload-id",
+  "uploadUrl": "/api/upload/chunked/upload/unique-upload-id",
   "expiresAt": "2023-01-01T01:00:00.000Z"
 }
 ```
@@ -129,7 +133,7 @@ X-API-Secret: your-api-secret
 **上传文件块:**
 
 ```http
-POST /api/upload/chunk/{uploadId}
+POST /api/upload/chunked/upload/{uploadId}
 Content-Type: multipart/form-data
 X-API-Key: your-api-key
 X-API-Secret: your-api-secret
@@ -154,7 +158,7 @@ chunkIndex: 0
 **完成上传:**
 
 ```http
-POST /api/upload/complete/{uploadId}
+POST /api/upload/chunked/complete/{uploadId}
 Content-Type: application/json
 X-API-Key: your-api-key
 X-API-Secret: your-api-secret
@@ -167,10 +171,43 @@ X-API-Secret: your-api-secret
   "uploadId": "unique-upload-id",
   "status": "completed",
   "filename": "unique-filename.mp4",
-  "path": "/path/to/uploads/unique-filename.mp4",
+  "path": "uploads/unique-filename.mp4",
+  "storageKey": "uploads/unique-filename.mp4",
   "size": 5368709120,
   "contentType": "video/mp4"
 }
+```
+
+### 图片实时处理
+
+上传后的图片可以通过以下接口实时转换：
+
+```http
+GET /api/processed/file/{fileId}?width=300&height=200&format=webp
+X-API-Key: your-api-key
+X-API-Secret: your-api-secret
+```
+
+支持参数：
+
+- `width`: 目标宽度
+- `height`: 目标高度
+- `format`: `jpg` `jpeg` `png` `webp` `avif` `gif`
+- `quality`: 可选质量参数
+
+行为说明：
+
+- 只传 `width` 时，高度会按原图比例自适应
+- 只传 `height` 时，宽度会按原图比例自适应
+- 同时传 `width` 和 `height` 时，会返回对应尺寸的图片
+- 变体会以确定性 key 缓存到存储后端
+
+处理任务或压缩包解压产物也可以通过对象 key 直接读取：
+
+```http
+GET /api/processed/object?key=processed/example.webp&width=300&format=webp
+X-API-Key: your-api-key
+X-API-Secret: your-api-secret
 ```
 
 **获取上传状态:**
@@ -615,12 +652,31 @@ npm start
 PORT=3000
 MONGODB_URI=mongodb://localhost:27017/cms-back
 JWT_SECRET=your-jwt-secret
+API_KEY=
+API_SECRET=
+API_PERMISSIONS=upload,process,read,delete
+STORAGE_DRIVER=local
+LOCAL_STORAGE_ROOT=.
+S3_ENDPOINT=
+S3_REGION=auto
+S3_BUCKET=
+S3_ACCESS_KEY_ID=
+S3_SECRET_ACCESS_KEY=
+S3_FORCE_PATH_STYLE=true
 UPLOAD_DIR=./uploads
 PROCESSED_DIR=./processed
+CHUNK_UPLOAD_DIR=./uploads/chunks
+EXTRACTED_DIR=./extracted
 FFMPEG_PATH=/usr/local/bin/ffmpeg
 FFPROBE_PATH=/usr/local/bin/ffprobe
 7Z_PATH=/usr/local/bin/7z
 ```
+
+说明：
+
+- 设置 `API_KEY` 和 `API_SECRET` 后，服务会直接使用 `.env` 中的固定凭据
+- 未设置 `API_KEY` / `API_SECRET` 时，系统仍可回退到数据库中的 API key 机制
+- `STORAGE_DRIVER=s3` 时，服务会通过 AWS SDK v3 连接兼容 S3 协议的对象存储，例如 MinIO、Cloudflare R2 或 AWS S3
 
 ## API 文档 (API Documentation)
 
@@ -640,9 +696,9 @@ X-API-Secret: your-api-secret
 - `POST /api/upload/generate-signed-url` - 生成签名 URL
 - `POST /api/upload/file/{signed-token}` - 上传文件
 - `POST /api/upload/chunked/init` - 初始化切片上传
-- `POST /api/upload/chunk/{uploadId}` - 上传文件块
-- `POST /api/upload/complete/{uploadId}` - 完成切片上传
-- `GET /api/upload/status/{uploadId}` - 获取上传状态
+- `POST /api/upload/chunked/upload/{uploadId}` - 上传文件块
+- `POST /api/upload/chunked/complete/{uploadId}` - 完成切片上传
+- `GET /api/upload/chunked/status/{uploadId}` - 获取上传状态
 
 **文件管理:**
 
@@ -650,6 +706,8 @@ X-API-Secret: your-api-secret
 - `GET /api/upload/file/{id}` - 获取文件信息
 - `GET /api/upload/file/{id}/download` - 下载文件
 - `DELETE /api/upload/file/{id}` - 删除文件
+- `GET /api/processed/file/{id}` - 读取原图或实时图片变体
+- `GET /api/processed/object?key=...` - 读取处理结果或缓存变体
 
 **处理任务:**
 

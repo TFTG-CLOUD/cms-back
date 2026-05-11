@@ -1,13 +1,18 @@
 const { spawn } = require('child_process');
 const { execSync } = require('child_process');
+const os = require('os');
 const path = require('path');
 const fs = require('fs').promises;
 const sharp = require('sharp');
 const crypto = require('crypto');
+const { buildArchiveObjectKey } = require('./storage/ObjectKeyHelper');
+const { getStorageService } = require('./storage/StorageService');
+const { buildProtectedObjectUrl } = require('./PublicAssetService');
 
 class ArchiveProcessor {
-  constructor(io) {
+  constructor(io, storageService = getStorageService()) {
     this.io = io;
+    this.storage = storageService;
     // 安全限制配置
     this.maxExtractedSize = 2 * 1024 * 1024 * 1024; // 2GB 最大解压大小
     this.maxFileCount = 5000; // 最大文件数量
@@ -247,8 +252,9 @@ class ArchiveProcessor {
 
   async processArchive(filePath, webhookUrl, webhookSecret, cmsId, parameters = {}) {
     try {
-      const extractDir = path.join(process.cwd(), 'extracted', crypto.randomBytes(16).toString('hex'));
-      const outputDir = path.join(process.cwd(), 'public', 'processed', crypto.randomBytes(16).toString('hex'));
+      const variantDirectory = crypto.randomBytes(16).toString('hex');
+      const extractDir = path.join(os.tmpdir(), 'cms-extracted', variantDirectory);
+      const outputDir = path.join(os.tmpdir(), 'cms-archive-output', variantDirectory);
 
       await fs.mkdir(outputDir, { recursive: true });
 
@@ -264,14 +270,21 @@ class ArchiveProcessor {
         const relativePath = path.relative(extractDir, imageFile);
         const outputFileName = `${path.basename(relativePath, path.extname(relativePath))}.webp`;
         const outputPath = path.join(outputDir, outputFileName);
+        const storageKey = buildArchiveObjectKey(variantDirectory, outputFileName);
 
         let result;
         if (convertToWebp && extractImages) {
           result = await this.convertImageToWebp(imageFile, outputPath, quality);
+          await this.storage.putFile(storageKey, outputPath, {
+            contentType: 'image/webp'
+          });
         } else {
           // Just copy the file if no conversion needed
           const stats = await fs.stat(imageFile);
           const metadata = await sharp(imageFile).metadata();
+          await this.storage.putFile(storageKey, imageFile, {
+            contentType: `image/${path.extname(imageFile).substring(1)}`
+          });
           result = {
             path: imageFile,
             width: metadata.width,
@@ -282,7 +295,9 @@ class ArchiveProcessor {
         }
 
         results.push({
-          url: `/processed/${path.basename(outputDir)}/${path.basename(outputPath)}`,
+          storageKey,
+          url: buildProtectedObjectUrl(storageKey),
+          publicUrl: null,
           width: result.width,
           height: result.height,
           originalName: path.basename(imageFile),
@@ -311,6 +326,7 @@ class ArchiveProcessor {
       }
 
       await fs.rm(extractDir, { recursive: true, force: true });
+      await fs.rm(outputDir, { recursive: true, force: true });
 
       return results;
     } catch (error) {
