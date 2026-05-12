@@ -23,14 +23,9 @@ function buildProtectedObjectUrl(storageKey) {
   return buildAssetUrl(`/api/processed/object?key=${encodeURIComponent(storageKey)}`);
 }
 
-function buildPublicObjectUrl(storageKey) {
-  return buildAssetUrl(`/api/processed/public/object?key=${encodeURIComponent(storageKey)}`);
-}
-
 module.exports = {
   buildAssetUrl,
   buildProtectedFileUrl,
   buildPublicFileUrl,
-  buildProtectedObjectUrl,
-  buildPublicObjectUrl
+  buildProtectedObjectUrl
 };

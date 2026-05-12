@@ -370,7 +370,138 @@ GET /api/processed/public/file/{fileId}?width=300&height=200&format=webp
 - `format` 支持：`jpg` `jpeg` `png` `webp` `avif` `gif`
 - 如果文件不是图片，比如视频、压缩包、音频，即使带了 `width` / `height` / `format` 参数，也会忽略这些参数并直接返回原文件，不会报错
 
-## 9. 常见错误码
+### 处理结果对象访问
+
+处理任务和压缩包处理返回的是 storage key，可以通过受保护的 object 端点读取：
+
+```http
+GET /api/processed/object?key=processed/example.webp
+X-API-Key: your-api-key
+X-API-Secret: your-api-secret
+```
+
+object 端点也支持图片实时处理参数：
+
+```http
+GET /api/processed/object?key=processed/example.webp&width=300&format=webp
+X-API-Key: your-api-key
+X-API-Secret: your-api-secret
+```
+
+当前没有公开 object 端点；公开直链只支持 `/api/processed/public/file/{fileId}`。
+
+## 9. 处理任务 API
+
+### 创建处理任务
+
+```http
+POST /api/processing/job
+Content-Type: application/json
+X-API-Key: your-api-key
+X-API-Secret: your-api-secret
+
+{
+  "fileId": "6820abcd1234ef5678900001",
+  "type": "image-resize",
+  "parameters": {
+    "width": 1200,
+    "format": "webp",
+    "quality": 80
+  },
+  "webhookUrl": "https://cms.example.com/webhook",
+  "webhookSecret": "optional-secret",
+  "cmsId": "cms-1"
+}
+```
+
+支持的 `type`：
+
+- `video-transcode`
+- `audio-convert`
+- `image-resize`
+- `video-thumbnail`
+- `archive-process`
+
+### 查询、下载和删除处理任务
+
+```http
+GET /api/processing/job/{jobId}
+GET /api/processing/jobs?page=1&limit=10&status=completed&type=image-resize
+GET /api/processing/job/{jobId}/download
+DELETE /api/processing/job/{jobId}
+X-API-Key: your-api-key
+X-API-Secret: your-api-secret
+```
+
+处理完成后的 `result.outputPath` 和 `result.storageKey` 都表示存储对象 key，而不是本地文件系统路径。下载和删除接口会通过当前配置的 storage driver 读取或删除对象，适用于本地存储和 S3 兼容存储。
+
+处理完成 webhook 示例：
+
+```json
+{
+  "jobId": "processing-job-id",
+  "status": "completed",
+  "progress": 100,
+  "result": {
+    "outputPath": "processed/processing-job-id_photo.webp",
+    "storageKey": "processed/processing-job-id_photo.webp",
+    "url": "https://assets.example.com/api/processed/object?key=processed%2Fprocessing-job-id_photo.webp",
+    "size": 245760,
+    "format": "webp",
+    "contentType": "image/webp",
+    "width": 1200,
+    "height": 800
+  },
+  "cmsId": "cms-1",
+  "timestamp": "2026-05-12T00:00:00.000Z"
+}
+```
+
+## 10. 批量处理 API
+
+### 创建批量处理任务
+
+```http
+POST /api/batch
+Content-Type: application/json
+X-API-Key: your-api-key
+X-API-Secret: your-api-secret
+
+{
+  "name": "Homepage images",
+  "description": "Resize homepage image assets",
+  "cmsId": "cms-1",
+  "fileIds": ["6820abcd1234ef5678900001", "6820abcd1234ef5678900002"],
+  "processingOptions": {
+    "type": "image-resize",
+    "parameters": {
+      "width": 1200,
+      "format": "webp",
+      "quality": 80
+    }
+  },
+  "webhookUrl": "https://cms.example.com/batch-webhook",
+  "webhookSecret": "optional-secret"
+}
+```
+
+批量处理支持 `video-transcode`、`audio-convert`、`image-resize`、`video-thumbnail`。每个文件会读取对应 `File` 记录中的 `storageKey`，并按 `processingOptions.type` 分派到对应处理器。
+
+### 批量任务操作
+
+```http
+POST /api/batch/{batchId}/start
+GET /api/batch/{batchId}
+GET /api/batch?cmsId=cms-1
+GET /api/batch/stats?cmsId=cms-1
+GET /api/batch/active/{cmsId}
+POST /api/batch/{batchId}/cancel
+POST /api/batch/{batchId}/files
+X-API-Key: your-api-key
+X-API-Secret: your-api-secret
+```
+
+## 11. 常见错误码
 
 - `400` 请求参数错误
 - `401` API key / secret 或签名 token 无效
@@ -378,7 +509,7 @@ GET /api/processed/public/file/{fileId}?width=300&height=200&format=webp
 - `404` 文件或上传会话不存在
 - `500` 服务端错误
 
-## 10. 当前实现结论
+## 12. 当前实现结论
 
 当前项目已经实现以下能力：
 
@@ -390,3 +521,5 @@ GET /api/processed/public/file/{fileId}?width=300&height=200&format=webp
 - S3 兼容协议对象存储
 - 上传后图片实时处理访问
 - 公开访问必须由上传头显式开启
+- 处理结果通过 storage key 访问、下载和删除
+- 批量处理按任务类型分派到对应处理器

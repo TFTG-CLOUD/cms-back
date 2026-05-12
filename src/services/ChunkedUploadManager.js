@@ -259,8 +259,8 @@ class ChunkedUploadManager {
 
     // 检查是否过期
     if (Date.now() > session.expiresAt) {
-      this.activeUploads.delete(uploadId);
       await this.cleanupChunks(uploadId);
+      this.activeUploads.delete(uploadId);
       return null;
     }
     
@@ -330,8 +330,8 @@ class ChunkedUploadManager {
     }
     
     for (const uploadId of expiredUploads) {
-      this.activeUploads.delete(uploadId);
       await this.cleanupChunks(uploadId);
+      this.activeUploads.delete(uploadId);
       console.log(`Cleaned up expired upload session: ${uploadId}`);
     }
     

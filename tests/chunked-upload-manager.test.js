@@ -130,6 +130,37 @@ describe('chunked upload manager', () => {
     expect(secondComplete.status).toBe('completed');
     expect(secondComplete.url).toBe('/api/processed/file/file-2');
   });
+
+  test('cleanupExpiredSessions removes chunk files from disk', async () => {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const path = require('path');
+
+    const chunkRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'chunked-expired-'));
+    const uploadDir = path.join(chunkRoot, 'chunks');
+    const storage = {
+      driverName: 'local',
+      putFile: jest.fn()
+    };
+
+    const { ChunkedUploadManager } = require('../src/services/ChunkedUploadManager');
+    const manager = new ChunkedUploadManager(uploadDir, 4, 1000, storage);
+
+    const { uploadId } = await manager.initializeUpload({
+      filename: 'photo.png',
+      fileSize: 8,
+      contentType: 'image/png'
+    });
+
+    await manager.uploadChunk(uploadId, 0, Buffer.from('hell'));
+    const uploadPath = manager.activeUploads.get(uploadId).uploadPath;
+    manager.activeUploads.get(uploadId).expiresAt = new Date(Date.now() - 1000);
+
+    await manager.cleanupExpiredSessions();
+
+    await expect(fs.access(uploadPath)).rejects.toThrow();
+    expect(manager.activeUploads.has(uploadId)).toBe(false);
+  });
 });
 
 describe('signed upload validation middleware', () => {

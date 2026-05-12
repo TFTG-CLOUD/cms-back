@@ -418,17 +418,22 @@ X-API-Secret: your-api-secret
 **创建批量处理任务:**
 
 ```http
-POST /api/processing/batch
+POST /api/batch
 Content-Type: application/json
 X-API-Key: your-api-key
 X-API-Secret: your-api-secret
 
 {
+  "name": "Homepage images",
+  "description": "Resize homepage image assets",
+  "cmsId": "cms-id",
   "fileIds": ["file1", "file2", "file3"],
-  "processingType": "image-convert",
-  "parameters": {
-    "format": "webp",
-    "quality": 80
+  "processingOptions": {
+    "type": "image-resize",
+    "parameters": {
+      "format": "webp",
+      "quality": 80
+    }
   },
   "webhookUrl": "https://your-cms.com/webhook"
 }
@@ -437,7 +442,7 @@ X-API-Secret: your-api-secret
 **批量任务状态:**
 
 ```http
-GET /api/processing/batch/{batchId}
+GET /api/batch/{batchId}
 X-API-Key: your-api-key
 X-API-Secret: your-api-secret
 ```
@@ -454,8 +459,11 @@ X-API-Secret: your-api-secret
   "status": "completed",
   "progress": 100,
   "result": {
-    "outputPath": "/processed/file.mp4",
+    "outputPath": "processed/job-id_input.mp4",
+    "storageKey": "processed/job-id_input.mp4",
+    "url": "/api/processed/object?key=processed%2Fjob-id_input.mp4",
     "size": 1024000,
+    "contentType": "video/mp4",
     "format": "mp4",
     "duration": 120,
     "bitrate": "2000k",
@@ -488,14 +496,16 @@ X-API-Secret: your-api-secret
 {
   "results": [
     {
-      "url": "/api/processed/image1.webp",
+      "storageKey": "processed/archive/archive-id/image1.webp",
+      "url": "/api/processed/object?key=processed%2Farchive%2Farchive-id%2Fimage1.webp",
       "width": 1920,
       "height": 1080,
       "originalName": "image1.jpg",
       "size": 256000
     },
     {
-      "url": "/api/processed/image2.webp",
+      "storageKey": "processed/archive/archive-id/image2.webp",
+      "url": "/api/processed/object?key=processed%2Farchive%2Farchive-id%2Fimage2.webp",
       "width": 1280,
       "height": 720,
       "originalName": "image2.png",
@@ -714,12 +724,19 @@ X-API-Secret: your-api-secret
 - `POST /api/processing/job` - 创建处理任务
 - `GET /api/processing/job/{id}` - 获取任务状态
 - `GET /api/processing/jobs` - 列出任务
+- `GET /api/processing/job/{id}/download` - 下载处理结果
 - `DELETE /api/processing/job/{id}` - 删除任务
 
 **批量处理:**
 
-- `POST /api/processing/batch` - 创建批量处理任务
-- `GET /api/processing/batch/{batchId}` - 获取批量任务状态
+- `POST /api/batch` - 创建批量处理任务
+- `GET /api/batch?cmsId=...` - 列出指定 CMS 的批量任务
+- `GET /api/batch/stats?cmsId=...` - 获取批量处理统计
+- `GET /api/batch/active/{cmsId}` - 获取指定 CMS 的活动批量任务
+- `GET /api/batch/{id}` - 获取批量任务状态
+- `POST /api/batch/{id}/start` - 启动批量处理
+- `POST /api/batch/{id}/cancel` - 取消批量处理
+- `POST /api/batch/{id}/files` - 向 pending 批量任务追加文件
 
 详细的 API 文档请参考各功能章节的具体示例。
 

@@ -6,7 +6,7 @@ const { authenticateApiKey, validatePermission } = require('../middleware/auth')
 const router = express.Router();
 
 // Create batch processing job
-router.post('/batch', authenticateApiKey, validatePermission('process'), async (req, res) => {
+router.post('/', authenticateApiKey, validatePermission('process'), async (req, res) => {
   try {
     const { 
       name, 
@@ -55,60 +55,51 @@ router.post('/batch', authenticateApiKey, validatePermission('process'), async (
   }
 });
 
-// Start batch processing
-router.post('/batch/:id/start', authenticateApiKey, validatePermission('process'), async (req, res) => {
+// Get batch statistics
+router.get('/stats', authenticateApiKey, validatePermission('read'), async (req, res) => {
   try {
-    const batchJob = await BatchProcessor(req.app.get('socketio')).startBatchProcessing(req.params.id);
+    const { cmsId } = req.query;
     
-    // Notify all clients subscribed to this batch and CMS
-    const io = req.app.get('socketio');
-    io.to(`batch-${req.params.id}`).emit('batch-started', {
-      batchId: req.params.id,
-      status: 'processing'
-    });
-    
-    io.to(`cms-${batchJob.cmsId}`).emit('cms-batch-started', {
-      batchId: req.params.id,
-      cmsId: batchJob.cmsId,
-      name: batchJob.name,
-      totalFiles: batchJob.totalFiles
-    });
+    if (!cmsId) {
+      return res.status(400).json({ error: 'CMS ID is required' });
+    }
+
+    const batchProcessor = new BatchProcessor(req.app.get('socketio'));
+    const stats = await batchProcessor.getBatchStatistics(cmsId);
 
     res.json({
-      id: batchJob._id,
-      status: batchJob.status,
-      startedAt: batchJob.startedAt
+      cmsId,
+      statistics: stats
     });
 
   } catch (error) {
-    console.error('Error starting batch processing:', error);
+    console.error('Error getting batch statistics:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
-// Get batch status
-router.get('/batch/:id', authenticateApiKey, validatePermission('read'), async (req, res) => {
+// Get active batches for real-time monitoring
+router.get('/active/:cmsId', authenticateApiKey, validatePermission('read'), async (req, res) => {
   try {
     const batchProcessor = new BatchProcessor(req.app.get('socketio'));
-    const batchStatus = await batchProcessor.getBatchStatus(req.params.id);
-    
-    if (!batchStatus) {
-      return res.status(404).json({ error: 'Batch job not found' });
-    }
+    const activeBatches = await batchProcessor.getActiveBatchesByCMS(req.params.cmsId);
 
-    res.json(batchStatus);
+    res.json({
+      cmsId: req.params.cmsId,
+      activeBatches
+    });
 
   } catch (error) {
-    console.error('Error getting batch status:', error);
+    console.error('Error getting active batches:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 // Get all batches for a CMS
-router.get('/batches', authenticateApiKey, validatePermission('read'), async (req, res) => {
+router.get('/', authenticateApiKey, validatePermission('read'), async (req, res) => {
   try {
     const { cmsId, status, page = 1, limit = 10 } = req.query;
-    
+
     if (!cmsId) {
       return res.status(400).json({ error: 'CMS ID is required' });
     }
@@ -139,8 +130,58 @@ router.get('/batches', authenticateApiKey, validatePermission('read'), async (re
   }
 });
 
+// Get batch status
+router.get('/:id', authenticateApiKey, validatePermission('read'), async (req, res) => {
+  try {
+    const batchProcessor = new BatchProcessor(req.app.get('socketio'));
+    const batchStatus = await batchProcessor.getBatchStatus(req.params.id);
+
+    if (!batchStatus) {
+      return res.status(404).json({ error: 'Batch job not found' });
+    }
+
+    res.json(batchStatus);
+
+  } catch (error) {
+    console.error('Error getting batch status:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Start batch processing
+router.post('/:id/start', authenticateApiKey, validatePermission('process'), async (req, res) => {
+  try {
+    const batchProcessor = new BatchProcessor(req.app.get('socketio'));
+    const batchJob = await batchProcessor.startBatchProcessing(req.params.id);
+
+    // Notify all clients subscribed to this batch and CMS
+    const io = req.app.get('socketio');
+    io.to(`batch-${req.params.id}`).emit('batch-started', {
+      batchId: req.params.id,
+      status: 'processing'
+    });
+
+    io.to(`cms-${batchJob.cmsId}`).emit('cms-batch-started', {
+      batchId: req.params.id,
+      cmsId: batchJob.cmsId,
+      name: batchJob.name,
+      totalFiles: batchJob.totalFiles
+    });
+
+    res.json({
+      id: batchJob._id,
+      status: batchJob.status,
+      startedAt: batchJob.startedAt
+    });
+
+  } catch (error) {
+    console.error('Error starting batch processing:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Cancel batch processing
-router.post('/batch/:id/cancel', authenticateApiKey, validatePermission('process'), async (req, res) => {
+router.post('/:id/cancel', authenticateApiKey, validatePermission('process'), async (req, res) => {
   try {
     const batchProcessor = new BatchProcessor(req.app.get('socketio'));
     const batchJob = await batchProcessor.cancelBatch(req.params.id);
@@ -170,7 +211,7 @@ router.post('/batch/:id/cancel', authenticateApiKey, validatePermission('process
 });
 
 // Add files to existing batch
-router.post('/batch/:id/files', authenticateApiKey, validatePermission('process'), async (req, res) => {
+router.post('/:id/files', authenticateApiKey, validatePermission('process'), async (req, res) => {
   try {
     const { fileIds } = req.body;
     
@@ -189,46 +230,6 @@ router.post('/batch/:id/files', authenticateApiKey, validatePermission('process'
 
   } catch (error) {
     console.error('Error adding files to batch:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get batch statistics
-router.get('/batch/stats', authenticateApiKey, validatePermission('read'), async (req, res) => {
-  try {
-    const { cmsId } = req.query;
-    
-    if (!cmsId) {
-      return res.status(400).json({ error: 'CMS ID is required' });
-    }
-
-    const batchProcessor = new BatchProcessor(req.app.get('socketio'));
-    const stats = await batchProcessor.getBatchStatistics(cmsId);
-
-    res.json({
-      cmsId,
-      statistics: stats
-    });
-
-  } catch (error) {
-    console.error('Error getting batch statistics:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get active batches for real-time monitoring
-router.get('/batch/active/:cmsId', authenticateApiKey, validatePermission('read'), async (req, res) => {
-  try {
-    const batchProcessor = new BatchProcessor(req.app.get('socketio'));
-    const activeBatches = await batchProcessor.getActiveBatchesByCMS(req.params.cmsId);
-
-    res.json({
-      cmsId: req.params.cmsId,
-      activeBatches
-    });
-
-  } catch (error) {
-    console.error('Error getting active batches:', error);
     res.status(500).json({ error: error.message });
   }
 });

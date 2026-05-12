@@ -1,5 +1,6 @@
 const BatchProcessingJob = require('../models/BatchProcessingJob');
 const ProcessingJob = require('../models/ProcessingJob');
+const File = require('../models/File');
 const MediaProcessor = require('./MediaProcessor');
 
 class BatchProcessor {
@@ -91,23 +92,31 @@ class BatchProcessor {
 
   async processSingleFile(batchJob, file) {
     try {
+      const sourceFile = await File.findById(file.fileId);
+      if (!sourceFile) {
+        throw new Error('File not found');
+      }
+
       // Update file status to processing
       batchJob.updateFileStatus(file.fileId, 'processing', 0);
       await batchJob.save();
       
       // Send individual file progress update
-      this.io.to(`batch-${batchJob._id}`).emit('batch-progress', {
-        batchId: batchJob._id,
-        fileId: file.fileId,
-        status: 'processing',
-        progress: 0
-      });
+      if (this.io) {
+        this.io.to(`batch-${batchJob._id}`).emit('batch-progress', {
+          batchId: batchJob._id,
+          fileId: file.fileId,
+          status: 'processing',
+          progress: 0
+        });
+      }
 
       // Create individual processing job
       const processingJob = new ProcessingJob({
         fileId: file.fileId,
         type: batchJob.processingOptions.type,
-        inputPath: '', // Will be populated from File model
+        inputPath: sourceFile.path,
+        inputStorageKey: sourceFile.storageKey || sourceFile.path,
         outputPath: '',
         parameters: batchJob.processingOptions.parameters,
         webhookUrl: batchJob.webhookUrl,
@@ -125,7 +134,7 @@ class BatchProcessor {
       this.monitorFileProgress(batchJob, file.fileId, processingJob._id);
 
       // Start processing
-      await this.mediaProcessor.processVideo(processingJob);
+      await this.processByType(processingJob);
 
     } catch (error) {
       console.error('Error processing file:', error);
@@ -138,17 +147,38 @@ class BatchProcessor {
       await batchJob.save();
 
       // Send error update
-      this.io.to(`batch-${batchJob._id}`).emit('batch-progress', {
-        batchId: batchJob._id,
-        fileId: file.fileId,
-        status: 'failed',
-        progress: 0,
-        error: error.message
-      });
+      if (this.io) {
+        this.io.to(`batch-${batchJob._id}`).emit('batch-progress', {
+          batchId: batchJob._id,
+          fileId: file.fileId,
+          status: 'failed',
+          progress: 0,
+          error: error.message
+        });
+      }
+    }
+  }
+
+  async processByType(processingJob) {
+    switch (processingJob.type) {
+      case 'video-transcode':
+        return this.mediaProcessor.processVideo(processingJob);
+      case 'audio-convert':
+        return this.mediaProcessor.processAudio(processingJob);
+      case 'image-resize':
+        return this.mediaProcessor.processImage(processingJob);
+      case 'video-thumbnail':
+        return this.mediaProcessor.generateThumbnail(processingJob);
+      default:
+        throw new Error(`Unsupported processing type: ${processingJob.type}`);
     }
   }
 
   monitorFileProgress(batchJob, fileId, processingJobId) {
+    if (!this.io) {
+      return;
+    }
+
     const progressHandler = (data) => {
       if (data.jobId.toString() === processingJobId.toString()) {
         // Update file progress in batch

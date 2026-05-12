@@ -4,6 +4,7 @@ const File = require('../models/File');
 const MediaProcessor = require('../services/MediaProcessor');
 const { QueueManager } = require('../services/QueueManager');
 const { authenticateApiKey, validatePermission } = require('../middleware/auth');
+const { getStorageService } = require('../services/storage/StorageService');
 
 const router = express.Router();
 
@@ -125,9 +126,9 @@ router.delete('/job/:id', authenticateApiKey, validatePermission('delete'), asyn
     }
 
     if (job.result && job.result.outputPath) {
-      const fs = require('fs').promises;
       try {
-        await fs.unlink(job.result.outputPath);
+        const storage = getStorageService();
+        await storage.deleteObject(job.result.storageKey || job.result.outputPath);
       } catch (error) {
         console.error('Error deleting processed file:', error);
       }
@@ -152,7 +153,16 @@ router.get('/job/:id/download', authenticateApiKey, validatePermission('read'), 
       return res.status(404).json({ error: 'Original file not found' });
     }
 
-    res.download(job.result.outputPath, `processed_${file.originalName}`);
+    const storage = getStorageService();
+    const storageKey = job.result.storageKey || job.result.outputPath;
+    const localPath = await storage.materializeToFile(storageKey);
+
+    res.download(localPath, `processed_${file.originalName}`, async () => {
+      if (storage.driverName === 's3') {
+        const fs = require('fs').promises;
+        await fs.rm(localPath, { force: true });
+      }
+    });
   } catch (error) {
     console.error('Error downloading processed file:', error);
     res.status(500).json({ error: 'Failed to download processed file' });
