@@ -10,9 +10,13 @@ const {
 
 const router = express.Router();
 
-async function sendStoredObject(req, res, { storageKey, fallbackContentType }) {
+async function sendStoredObject(req, res, { storageKey, fallbackContentType, isPublic = false }) {
   const storage = getStorageService();
   const transformOptions = normalizeImageTransformOptions(req.query);
+
+  if (isPublic) {
+    res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+  }
 
   if (!transformOptions) {
     const object = await storage.getBuffer(storageKey);
@@ -70,7 +74,8 @@ async function sendFileById(req, res, options = {}) {
 
   await sendStoredObject(req, res, {
     storageKey: file.storageKey || file.path,
-    fallbackContentType: file.mimeType
+    fallbackContentType: file.mimeType,
+    isPublic: !!options.requirePublic
   });
 }
 

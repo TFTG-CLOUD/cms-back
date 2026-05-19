@@ -154,6 +154,7 @@ describe('processed image delivery route', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['content-type']).toContain('image/jpeg');
+    expect(response.headers['cross-origin-resource-policy']).toBe('cross-origin');
     expect(authSpy).not.toHaveBeenCalled();
   });
 
