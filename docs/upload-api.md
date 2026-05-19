@@ -29,6 +29,21 @@ PUBLIC_BASE_URL=https://your-domain.com
 
 未配置时，接口会返回站内相对路径。
 
+如果服务部署在 Nginx、Caddy、Cloudflare、Ingress 等反向代理后面，建议配置：
+
+```bash
+TRUST_PROXY=1
+```
+
+说明：
+
+- `1`：信任第一层代理，适合大多数单层反向代理部署
+- `2`：适合两层代理链路
+- `true`：信任所有代理
+- `false`：禁用代理信任
+
+这个配置可以避免 `express-rate-limit` 在收到 `X-Forwarded-For` 时抛出 `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`。
+
 ## 公开访问开关
 
 只有在上传时显式传递公开头，文件才允许通过公开直链访问：

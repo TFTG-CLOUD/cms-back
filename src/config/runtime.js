@@ -48,6 +48,9 @@ function getRuntimeConfig() {
         secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || '',
         forcePathStyle: (process.env.S3_FORCE_PATH_STYLE || 'true').toLowerCase() === 'true'
       }
+    },
+    imageValidation: {
+      maxPixels: Number.parseInt(process.env.IMAGE_MAX_PIXELS || '', 10) || 10000 * 10000
     }
   };
 }

@@ -7,6 +7,7 @@ const File = require('../models/File');
 const { getRuntimeConfig } = require('../config/runtime');
 const { getStorageService } = require('./storage/StorageService');
 const { isPublicUploadRequest } = require('./UploadAccessService');
+const { validateImageBuffer } = require('./ImageUploadValidator');
 const {
   buildProtectedFileUrl,
   buildPublicFileUrl
@@ -148,6 +149,9 @@ class ChunkedUploadManager {
         const chunkData = await fsPromises.readFile(chunkPath);
         await fsPromises.appendFile(finalPath, chunkData);
       }
+
+      const finalBuffer = await fsPromises.readFile(finalPath);
+      await validateImageBuffer(finalBuffer, session.contentType, getRuntimeConfig());
 
       await this.storage.putFile(storageKey, finalPath, {
         contentType: session.contentType

@@ -15,6 +15,7 @@ const { getRuntimeConfig } = require('../config/runtime');
 const { getStorageService } = require('../services/storage/StorageService');
 const { buildOriginalObjectKey } = require('../services/storage/ObjectKeyHelper');
 const { isPublicUploadRequest } = require('../services/UploadAccessService');
+const { validateImageBuffer } = require('../services/ImageUploadValidator');
 const {
   buildProtectedFileUrl,
   buildPublicFileUrl
@@ -92,6 +93,13 @@ router.post('/file/:signedToken', authenticateApiKey, validatePermission('upload
     });
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    try {
+      await validateImageBuffer(req.file.buffer || (await fs.readFile(req.file.path)), req.file.mimetype, getRuntimeConfig());
+    } catch (error) {
+      await fs.rm(req.file.path, { force: true });
+      return res.status(400).json({ error: error.message });
     }
 
     const isPublic = isPublicUploadRequest(req.headers);

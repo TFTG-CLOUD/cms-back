@@ -1,6 +1,18 @@
 describe('chunked upload manager', () => {
   const originalEnv = process.env;
 
+  async function createImageBuffer(width = 2, height = 2) {
+    const sharp = require('sharp');
+    return sharp({
+      create: {
+        width,
+        height,
+        channels: 3,
+        background: '#336699'
+      }
+    }).png().toBuffer();
+  }
+
   beforeEach(() => {
     jest.resetModules();
     process.env = {
@@ -71,17 +83,17 @@ describe('chunked upload manager', () => {
       })
     );
 
+    const imageBuffer = await createImageBuffer();
     const { ChunkedUploadManager } = require('../src/services/ChunkedUploadManager');
-    const manager = new ChunkedUploadManager(uploadDir, 4, 1000, storage);
+    const manager = new ChunkedUploadManager(uploadDir, imageBuffer.length, 1000, storage);
 
     const { uploadId } = await manager.initializeUpload({
       filename: 'photo.png',
-      fileSize: 5,
+      fileSize: imageBuffer.length,
       contentType: 'image/png'
     });
 
-    await manager.uploadChunk(uploadId, 0, Buffer.from('hell'));
-    await manager.uploadChunk(uploadId, 1, Buffer.from('o'));
+    await manager.uploadChunk(uploadId, 0, imageBuffer);
 
     const status = await manager.getUploadStatus(uploadId);
 
@@ -112,17 +124,17 @@ describe('chunked upload manager', () => {
       })
     );
 
+    const imageBuffer = await createImageBuffer();
     const { ChunkedUploadManager } = require('../src/services/ChunkedUploadManager');
-    const manager = new ChunkedUploadManager(uploadDir, 4, 1000, storage);
+    const manager = new ChunkedUploadManager(uploadDir, imageBuffer.length, 1000, storage);
 
     const { uploadId } = await manager.initializeUpload({
       filename: 'photo.png',
-      fileSize: 5,
+      fileSize: imageBuffer.length,
       contentType: 'image/png'
     });
 
-    await manager.uploadChunk(uploadId, 0, Buffer.from('hell'));
-    await manager.uploadChunk(uploadId, 1, Buffer.from('o'));
+    await manager.uploadChunk(uploadId, 0, imageBuffer);
     const secondComplete = await manager.completeUpload(uploadId);
 
     expect(storage.putFile).toHaveBeenCalledTimes(1);
@@ -143,16 +155,17 @@ describe('chunked upload manager', () => {
       putFile: jest.fn()
     };
 
+    const imageBuffer = await createImageBuffer();
     const { ChunkedUploadManager } = require('../src/services/ChunkedUploadManager');
-    const manager = new ChunkedUploadManager(uploadDir, 4, 1000, storage);
+    const manager = new ChunkedUploadManager(uploadDir, imageBuffer.length, 1000, storage);
 
     const { uploadId } = await manager.initializeUpload({
       filename: 'photo.png',
-      fileSize: 8,
+      fileSize: imageBuffer.length,
       contentType: 'image/png'
     });
 
-    await manager.uploadChunk(uploadId, 0, Buffer.from('hell'));
+    await manager.uploadChunk(uploadId, 0, imageBuffer);
     const uploadPath = manager.activeUploads.get(uploadId).uploadPath;
     manager.activeUploads.get(uploadId).expiresAt = new Date(Date.now() - 1000);
 
@@ -160,6 +173,43 @@ describe('chunked upload manager', () => {
 
     await expect(fs.access(uploadPath)).rejects.toThrow();
     expect(manager.activeUploads.has(uploadId)).toBe(false);
+  });
+
+  test('completeUpload rejects corrupted image files after chunk assembly', async () => {
+    const fs = require('fs').promises;
+    const os = require('os');
+    const path = require('path');
+
+    const chunkRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'chunked-bad-image-'));
+    const uploadDir = path.join(chunkRoot, 'chunks');
+    const storage = {
+      driverName: 's3',
+      putFile: jest.fn().mockResolvedValue({})
+    };
+
+    jest.doMock('../src/models/File', () =>
+      jest.fn().mockImplementation(function MockFile(data) {
+        Object.assign(this, data, {
+          _id: 'file-bad-image',
+          uploadDate: new Date('2026-05-11T00:00:00.000Z')
+        });
+        this.save = jest.fn().mockResolvedValue(this);
+      })
+    );
+
+    const { ChunkedUploadManager } = require('../src/services/ChunkedUploadManager');
+    const manager = new ChunkedUploadManager(uploadDir, 8, 1000, storage);
+
+    const { uploadId } = await manager.initializeUpload({
+      filename: 'broken.jpg',
+      fileSize: 16,
+      contentType: 'image/jpeg'
+    });
+
+    await manager.uploadChunk(uploadId, 0, Buffer.from('not-a-re'));
+    await expect(manager.uploadChunk(uploadId, 1, Buffer.from('al-image'))).rejects.toThrow(
+      'Invalid or corrupted image file'
+    );
   });
 });
 

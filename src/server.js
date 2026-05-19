@@ -15,8 +15,10 @@ const batchRoutes = require('./routes/batch');
 const processedRoutes = require('./routes/processed');
 const demoApp = require('./app');
 const DatabaseInitializer = require('./services/DatabaseInitializer');
+const { getTrustProxySetting } = require('./config/proxy');
 
 const app = express();
+app.set('trust proxy', getTrustProxySetting());
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
