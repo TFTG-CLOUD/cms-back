@@ -15,7 +15,7 @@ const batchRoutes = require('./routes/batch');
 const processedRoutes = require('./routes/processed');
 const demoApp = require('./app');
 const DatabaseInitializer = require('./services/DatabaseInitializer');
-const { getTrustProxySetting } = require('./config/proxy');
+const { getTrustProxySetting, shouldSkipRateLimit } = require('./config/proxy');
 
 const app = express();
 app.set('trust proxy', getTrustProxySetting());
@@ -29,7 +29,8 @@ const io = socketIo(server, {
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100 // limit each IP to 100 requests per windowMs
+  max: 100, // limit each IP to 100 requests per windowMs
+  skip: shouldSkipRateLimit
 });
 
 app.use(helmet());

@@ -23,6 +23,21 @@ function getTrustProxySetting() {
   return rawValue;
 }
 
+function shouldSkipRateLimit(req = {}) {
+  const requestPath = typeof req.path === 'string'
+    ? req.path
+    : typeof req.originalUrl === 'string'
+      ? req.originalUrl
+      : '';
+
+  if (requestPath.startsWith('/api/upload/')) {
+    return true;
+  }
+
+  return req.method === 'GET' && requestPath.startsWith('/api/processed/public/file/');
+}
+
 module.exports = {
-  getTrustProxySetting
+  getTrustProxySetting,
+  shouldSkipRateLimit
 };

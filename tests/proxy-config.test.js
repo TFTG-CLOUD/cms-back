@@ -31,4 +31,17 @@ describe('proxy trust configuration', () => {
 
     expect(getTrustProxySetting()).toBe(2);
   });
+
+  test('skips rate limiting for public file delivery and upload routes', () => {
+    const { shouldSkipRateLimit } = require('../src/config/proxy');
+
+    expect(shouldSkipRateLimit({ method: 'GET', path: '/api/processed/public/file/abc' })).toBe(true);
+    expect(shouldSkipRateLimit({ method: 'GET', path: '/api/processed/public/file/abc?width=300' })).toBe(true);
+    expect(shouldSkipRateLimit({ method: 'POST', path: '/api/upload/generate-signed-url' })).toBe(true);
+    expect(shouldSkipRateLimit({ method: 'POST', path: '/api/upload/chunked/init' })).toBe(true);
+    expect(shouldSkipRateLimit({ method: 'POST', path: '/api/upload/chunked/upload/abc' })).toBe(true);
+    expect(shouldSkipRateLimit({ method: 'GET', path: '/api/upload/chunked/status/abc' })).toBe(true);
+    expect(shouldSkipRateLimit({ method: 'POST', path: '/api/processed/public/file/abc' })).toBe(false);
+    expect(shouldSkipRateLimit({ method: 'GET', path: '/api/processing/jobs/abc' })).toBe(false);
+  });
 });

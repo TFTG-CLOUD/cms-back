@@ -44,6 +44,18 @@ TRUST_PROXY=1
 
 这个配置可以避免 `express-rate-limit` 在收到 `X-Forwarded-For` 时抛出 `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR`。
 
+图片上传校验还支持像素总量限制：
+
+```bash
+IMAGE_MAX_PIXELS=100000000
+```
+
+说明：
+
+- 不填写时，默认值为 `100000000`，也就是 `1` 亿像素
+- 如果上传图片的 `width * height` 超过这个值，会被拒绝
+- 如果你想更严格一些，可以改成例如 `40000000`
+
 ## 公开访问开关
 
 只有在上传时显式传递公开头，文件才允许通过公开直链访问：
@@ -536,5 +548,7 @@ X-API-Secret: your-api-secret
 - S3 兼容协议对象存储
 - 上传后图片实时处理访问
 - 公开访问必须由上传头显式开启
+- 上传相关接口不受全局 rate-limit 限制
+- 公共图片直链不受全局 rate-limit 限制
 - 处理结果通过 storage key 访问、下载和删除
 - 批量处理按任务类型分派到对应处理器
