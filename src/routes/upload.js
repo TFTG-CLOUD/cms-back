@@ -58,6 +58,56 @@ const chunkUpload = multer({
   }
 });
 
+function attachUploadTimeout(req, res, timeoutMs = 600000) {
+  const { socket } = req;
+  if (!socket || typeof socket.setTimeout !== 'function' || typeof socket.on !== 'function') {
+    return () => {};
+  }
+
+  let cleanedUp = false;
+
+  const cleanup = () => {
+    if (cleanedUp) {
+      return;
+    }
+
+    cleanedUp = true;
+    socket.setTimeout(0);
+
+    if (typeof socket.off === 'function') {
+      socket.off('timeout', handleTimeout);
+    } else if (typeof socket.removeListener === 'function') {
+      socket.removeListener('timeout', handleTimeout);
+    }
+
+    if (typeof res.off === 'function') {
+      res.off('finish', cleanup);
+      res.off('close', cleanup);
+    } else if (typeof res.removeListener === 'function') {
+      res.removeListener('finish', cleanup);
+      res.removeListener('close', cleanup);
+    }
+  };
+
+  const handleTimeout = () => {
+    console.log('Socket timeout occurred');
+    cleanup();
+
+    if (res.headersSent || res.writableEnded || res.destroyed) {
+      return;
+    }
+
+    res.status(408).send('Upload timeout');
+  };
+
+  socket.setTimeout(timeoutMs);
+  socket.on('timeout', handleTimeout);
+  res.on('finish', cleanup);
+  res.on('close', cleanup);
+
+  return cleanup;
+}
+
 router.post('/generate-signed-url', authenticateApiKey, validatePermission('upload'), async (req, res) => {
   try {
     const { filename, contentType, expiresIn = 3600 } = req.body;
@@ -86,11 +136,7 @@ router.post('/generate-signed-url', authenticateApiKey, validatePermission('uplo
 
 router.post('/file/:signedToken', authenticateApiKey, validatePermission('upload'), validateSignedUploadToken, upload.single('file'), async (req, res) => {
   try {
-    req.socket.setTimeout(600000);
-    req.socket.on('timeout', () => {
-      console.log('Socket timeout occurred');
-      res.status(408).send('Upload timeout');
-    });
+    attachUploadTimeout(req, res);
     if (!req.file) {
       return res.status(400).json({ error: 'No file uploaded' });
     }

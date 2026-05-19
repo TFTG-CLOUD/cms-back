@@ -121,4 +121,43 @@ describe('upload route', () => {
     expect(response.body).toEqual({ error: 'Invalid or corrupted image file' });
     expect(save).not.toHaveBeenCalled();
   });
+
+  test('does not try to send a timeout response after the request has already finished', async () => {
+    const request = require('supertest');
+    let capturedTimeoutHandler = null;
+
+    jest.doMock('../src/middleware/auth', () => ({
+      authenticateApiKey: (req, res, next) => {
+        req.apiKey = { _id: 'env-api-key', permissions: ['upload', 'read'] };
+        next();
+      },
+      validatePermission: () => (req, res, next) => next(),
+      generateSignedUrl: () => 'signed-token',
+      validateSignedUploadToken: (req, res, next) => next()
+    }));
+
+    const uploadRoutes = require('../src/routes/upload');
+    const app = express();
+
+    app.use((req, res, next) => {
+      req.socket.setTimeout = jest.fn();
+      req.socket.on = jest.fn((event, handler) => {
+        if (event === 'timeout') {
+          capturedTimeoutHandler = handler;
+        }
+        return req.socket;
+      });
+      next();
+    });
+
+    app.use('/api/upload', uploadRoutes);
+
+    const response = await request(app)
+      .post('/api/upload/file/signed-token');
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({ error: 'No file uploaded' });
+    expect(typeof capturedTimeoutHandler).toBe('function');
+    expect(() => capturedTimeoutHandler()).not.toThrow();
+  });
 });
