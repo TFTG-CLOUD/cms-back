@@ -119,6 +119,7 @@ describe('processed image delivery route', () => {
   test('serves a public direct link without API-key middleware', async () => {
     const request = require('supertest');
     const imageBuffer = await createImageBuffer(320, 240);
+    const lastModified = new Date('2026-05-20T12:34:56.000Z');
 
     const authSpy = jest.fn((req, res, next) => next());
 
@@ -140,7 +141,9 @@ describe('processed image delivery route', () => {
         driverName: 'local',
         getBuffer: jest.fn().mockResolvedValue({
           body: imageBuffer,
-          contentType: 'image/jpeg'
+          contentType: 'image/jpeg',
+          etag: '"public-etag"',
+          lastModified
         }),
         putBuffer: jest.fn().mockResolvedValue({})
       })
@@ -154,8 +157,128 @@ describe('processed image delivery route', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['content-type']).toContain('image/jpeg');
+    expect(response.headers['cache-control']).toBe('public, max-age=31536000, s-maxage=31536000, immutable');
+    expect(response.headers['cdn-cache-control']).toBe('public, max-age=31536000, immutable');
+    expect(response.headers['cloudflare-cdn-cache-control']).toBe('public, max-age=31536000, immutable');
     expect(response.headers['cross-origin-resource-policy']).toBe('cross-origin');
+    expect(response.headers.etag).toBe('"public-etag"');
+    expect(response.headers['last-modified']).toBe(lastModified.toUTCString());
     expect(authSpy).not.toHaveBeenCalled();
+  });
+
+  test('returns 304 for a public asset when If-None-Match matches the current ETag', async () => {
+    const request = require('supertest');
+    const imageBuffer = await createImageBuffer(320, 240);
+
+    jest.doMock('../src/middleware/auth', () => ({
+      authenticateApiKey: (req, res, next) => next(),
+      validatePermission: () => (req, res, next) => next()
+    }));
+    jest.doMock('../src/models/File', () => ({
+      findById: jest.fn().mockResolvedValue({
+        _id: 'file-public-304',
+        originalName: 'public.jpg',
+        mimeType: 'image/jpeg',
+        storageKey: 'uploads/public.jpg',
+        isPublic: true
+      })
+    }));
+    jest.doMock('../src/services/storage/StorageService', () => ({
+      getStorageService: () => ({
+        driverName: 'local',
+        getBuffer: jest.fn().mockResolvedValue({
+          body: imageBuffer,
+          contentType: 'image/jpeg',
+          etag: '"public-etag-304"',
+          lastModified: new Date('2026-05-20T12:34:56.000Z')
+        }),
+        putBuffer: jest.fn().mockResolvedValue({})
+      })
+    }));
+
+    const processedRoutes = require('../src/routes/processed');
+    const app = express();
+    app.use('/', processedRoutes);
+
+    const response = await request(app)
+      .get('/public/file/file-public-304')
+      .set('If-None-Match', '"public-etag-304"');
+
+    expect(response.status).toBe(304);
+    expect(response.headers.etag).toBe('"public-etag-304"');
+    expect(response.text).toBe('');
+  });
+
+  test('serves cached variants without reprocessing the image on subsequent requests', async () => {
+    const request = require('supertest');
+    const imageBuffer = await createImageBuffer(600, 400);
+    const cachedVariantBuffer = await createImageBuffer(300, 200, 'webp');
+
+    jest.doMock('../src/middleware/auth', () => ({
+      authenticateApiKey: (req, res, next) => next(),
+      validatePermission: () => (req, res, next) => next()
+    }));
+    jest.doMock('../src/models/File', () => ({
+      findById: jest.fn().mockResolvedValue({
+        _id: 'file-cached-public',
+        originalName: 'public.jpg',
+        mimeType: 'image/jpeg',
+        storageKey: 'uploads/public.jpg',
+        isPublic: true
+      })
+    }));
+
+    const getBuffer = jest.fn()
+      .mockImplementationOnce(async (key) => {
+        expect(key).toBe('uploads/public.jpg');
+        return {
+          body: imageBuffer,
+          contentType: 'image/jpeg'
+        };
+      })
+      .mockImplementationOnce(async (key) => {
+        expect(key).toMatch(/^variants\/.+\.webp$/);
+        throw new Error('Not found');
+      })
+      .mockImplementationOnce(async (key) => {
+        expect(key).toBe('uploads/public.jpg');
+        return {
+          body: imageBuffer,
+          contentType: 'image/jpeg'
+        };
+      })
+      .mockImplementationOnce(async (key) => {
+        expect(key).toMatch(/^variants\/.+\.webp$/);
+        return {
+          body: cachedVariantBuffer,
+          contentType: 'image/webp'
+        };
+      });
+
+    const putBuffer = jest.fn().mockResolvedValue({});
+    jest.doMock('../src/services/storage/StorageService', () => ({
+      getStorageService: () => ({
+        driverName: 'local',
+        getBuffer,
+        putBuffer
+      })
+    }));
+
+    const processedRoutes = require('../src/routes/processed');
+    const app = express();
+    app.use('/', processedRoutes);
+
+    const firstResponse = await request(app).get('/public/file/file-cached-public?width=300&format=webp');
+    const secondResponse = await request(app).get('/public/file/file-cached-public?width=300&format=webp');
+
+    expect(firstResponse.status).toBe(200);
+    expect(firstResponse.headers['content-type']).toContain('image/webp');
+    expect(firstResponse.headers['cache-control']).toBe('public, max-age=31536000, s-maxage=31536000, immutable');
+    expect(secondResponse.status).toBe(200);
+    expect(secondResponse.headers['content-type']).toContain('image/webp');
+    expect(secondResponse.headers['cache-control']).toBe('public, max-age=31536000, s-maxage=31536000, immutable');
+    expect(putBuffer).toHaveBeenCalledTimes(1);
+    expect(getBuffer).toHaveBeenCalledTimes(4);
   });
 
   test('rejects the public route for files that were not uploaded as public', async () => {

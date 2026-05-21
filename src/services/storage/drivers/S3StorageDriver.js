@@ -80,7 +80,9 @@ class S3StorageDriver {
 
     return {
       body: await bodyToBuffer(response.Body),
-      contentType: response.ContentType || 'application/octet-stream'
+      contentType: response.ContentType || 'application/octet-stream',
+      etag: response.ETag,
+      lastModified: response.LastModified
     };
   }
 

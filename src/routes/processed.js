@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const File = require('../models/File');
 const { authenticateApiKey, validatePermission } = require('../middleware/auth');
 const { getStorageService } = require('../services/storage/StorageService');
@@ -9,6 +10,34 @@ const {
 } = require('../services/ImageVariantService');
 
 const router = express.Router();
+const PUBLIC_ASSET_CACHE_CONTROL = 'public, max-age=31536000, s-maxage=31536000, immutable';
+const PUBLIC_CDN_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
+function applyPublicCachingHeaders(req, res, object = {}) {
+  const etag = object.etag || (Buffer.isBuffer(object.body)
+    ? `"${crypto.createHash('sha1').update(object.body).digest('hex')}"`
+    : null);
+  const lastModified = object.lastModified ? new Date(object.lastModified) : null;
+
+  res.set('Cache-Control', PUBLIC_ASSET_CACHE_CONTROL);
+  res.set('CDN-Cache-Control', PUBLIC_CDN_CACHE_CONTROL);
+  res.set('Cloudflare-CDN-Cache-Control', PUBLIC_CDN_CACHE_CONTROL);
+
+  if (etag) {
+    res.set('ETag', etag);
+  }
+
+  if (lastModified && !Number.isNaN(lastModified.getTime())) {
+    res.set('Last-Modified', lastModified.toUTCString());
+  }
+
+  if (req.fresh) {
+    res.status(304).end();
+    return true;
+  }
+
+  return false;
+}
 
 async function sendStoredObject(req, res, { storageKey, fallbackContentType, isPublic = false }) {
   const storage = getStorageService();
@@ -16,10 +45,14 @@ async function sendStoredObject(req, res, { storageKey, fallbackContentType, isP
 
   if (isPublic) {
     res.set('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.set('Cache-Control', PUBLIC_ASSET_CACHE_CONTROL);
   }
 
   if (!transformOptions) {
     const object = await storage.getBuffer(storageKey);
+    if (isPublic && applyPublicCachingHeaders(req, res, object)) {
+      return;
+    }
     res.type(object.contentType || fallbackContentType || 'application/octet-stream');
     res.send(object.body);
     return;
@@ -29,6 +62,9 @@ async function sendStoredObject(req, res, { storageKey, fallbackContentType, isP
   const originalContentType = original.contentType || fallbackContentType || 'application/octet-stream';
 
   if (!originalContentType.startsWith('image/')) {
+    if (isPublic && applyPublicCachingHeaders(req, res, original)) {
+      return;
+    }
     res.type(originalContentType);
     res.set('X-Transform-Ignored', 'true');
     res.send(original.body);
@@ -39,8 +75,11 @@ async function sendStoredObject(req, res, { storageKey, fallbackContentType, isP
 
   try {
     const cachedVariant = await storage.getBuffer(variantKey);
+    if (isPublic && applyPublicCachingHeaders(req, res, cachedVariant)) {
+      return;
+    }
     res.type(cachedVariant.contentType || originalContentType);
-    res.set('Cache-Control', 'public, max-age=31536000, immutable');
+    res.set('Cache-Control', PUBLIC_ASSET_CACHE_CONTROL);
     res.send(cachedVariant.body);
     return;
   } catch (error) {
@@ -57,8 +96,16 @@ async function sendStoredObject(req, res, { storageKey, fallbackContentType, isP
     contentType: transformed.contentType
   });
 
+  const responseObject = {
+    body: transformed.body,
+    contentType: transformed.contentType,
+    lastModified: new Date()
+  };
+  if (isPublic && applyPublicCachingHeaders(req, res, responseObject)) {
+    return;
+  }
   res.type(transformed.contentType);
-  res.set('Cache-Control', 'public, max-age=31536000, immutable');
+  res.set('Cache-Control', PUBLIC_ASSET_CACHE_CONTROL);
   res.send(transformed.body);
 }
 

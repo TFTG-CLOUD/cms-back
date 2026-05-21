@@ -30,6 +30,8 @@ describe('storage service local driver', () => {
 
     expect(result.body.toString()).toBe('hello world');
     expect(result.contentType).toBe('text/plain');
+    expect(result.etag).toMatch(/^".+"$/);
+    expect(new Date(result.lastModified).toString()).not.toBe('Invalid Date');
 
     await fs.rm(rootDir, { recursive: true, force: true });
   });
@@ -61,7 +63,9 @@ describe('storage service s3 driver', () => {
       .mockResolvedValueOnce({})
       .mockResolvedValueOnce({
         Body: Buffer.from('from-s3'),
-        ContentType: 'text/plain'
+        ContentType: 'text/plain',
+        ETag: '"s3-etag"',
+        LastModified: new Date('2026-05-20T00:00:00.000Z')
       });
 
     jest.doMock('@aws-sdk/client-s3', () => {
@@ -120,5 +124,7 @@ describe('storage service s3 driver', () => {
     });
     expect(result.body.toString()).toBe('from-s3');
     expect(result.contentType).toBe('text/plain');
+    expect(result.etag).toBe('"s3-etag"');
+    expect(new Date(result.lastModified).toISOString()).toBe('2026-05-20T00:00:00.000Z');
   });
 });

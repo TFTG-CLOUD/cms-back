@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const fs = require('fs');
 const fsPromises = fs.promises;
 const path = require('path');
@@ -47,10 +48,13 @@ class LocalStorageDriver {
   async getBuffer(key) {
     const targetPath = this.resolvePath(key);
     const body = await fsPromises.readFile(targetPath);
+    const stats = await fsPromises.stat(targetPath);
 
     return {
       body,
-      contentType: this.guessContentType(targetPath)
+      contentType: this.guessContentType(targetPath),
+      etag: `"${crypto.createHash('sha1').update(body).digest('hex')}"`,
+      lastModified: stats.mtime
     };
   }
 
